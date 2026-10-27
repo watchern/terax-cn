@@ -29,6 +29,9 @@ concurrency:
 
 env:
   UPSTREAM_REPO: crynta/terax-ai
+  # Windows runner 的 Python 默认用 cp1252 写 stdout,强制 UTF-8 覆盖
+  # apply_i18n 步骤与 beforeBuildCommand 里调用的 patch_dist
+  PYTHONUTF8: '1'
 
 jobs:
   check:

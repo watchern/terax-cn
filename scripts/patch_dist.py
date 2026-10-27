@@ -25,6 +25,18 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
+
+def _force_utf8_stdio() -> None:
+    """Windows 控制台默认 ANSI 代码页(如 cp1252/cp936),直接 print 中文会 UnicodeEncodeError。"""
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.reconfigure(encoding='utf-8', errors='replace')
+        except (AttributeError, OSError, ValueError):
+            pass
+
+
+_force_utf8_stdio()
+
 # 字符串字面量(双引号/单引号/反引号)。组1=双引号内容,组2=单引号内容,组3=反引号内容。
 # 注意:刻意不匹配跨行双/单引号字符串,产物中最小化输出几乎不产生这类形态。
 LITERAL_RE = re.compile(

@@ -28,6 +28,21 @@ import sys
 from pathlib import Path
 
 
+def _force_utf8_stdio() -> None:
+    """Windows 控制台默认 ANSI 代码页(如 cp1252/cp936),直接 print 中文会 UnicodeEncodeError。
+
+    启动时把标准流重配为 UTF-8;errors='replace' 保证任何情况下日志都不会再炸。
+    """
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.reconfigure(encoding='utf-8', errors='replace')
+        except (AttributeError, OSError, ValueError):
+            pass
+
+
+_force_utf8_stdio()
+
+
 def fail(msg: str) -> 'NoReturn':  # type: ignore[valid-type]
     print(f'[apply-i18n] 错误: {msg}', file=sys.stderr)
     sys.exit(1)
