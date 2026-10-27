@@ -220,10 +220,22 @@ jobs:
       GH_TOKEN: ${{ github.token }}
       CN_TAG: ${{ needs.check.outputs.cn_tag }}
     steps:
+      - name: 下载汉化覆盖率报告
+        uses: actions/download-artifact@v7
+        with:
+          pattern: i18n-report-*
+          merge-multiple: true
+          path: report
+
       - name: 将草稿 Release 转为正式发布并写入构建信息
         run: |
           set -euo pipefail
           BODY="$(gh release view "$CN_TAG" --repo "$GITHUB_REPOSITORY" --json body --jq .body)"
-          METADATA="\n\n---\n\n构建信息:第 ${{ github.run_number }} 次构建 · 上游 ${{ needs.check.outputs.upstream_tag }} · $(date -u '+%Y-%m-%d %H:%M UTC')"
+          METADATA="$(printf '\n\n---\n\n构建信息:第 %s 次构建 · 上游 %s · %s' "${{ github.run_number }}" "${{ needs.check.outputs.upstream_tag }}" "$(date -u '+%Y-%m-%d %H:%M UTC')")"
           gh release edit "$CN_TAG" --repo "$GITHUB_REPOSITORY" --draft=false --latest --notes "${BODY}${METADATA}"
+          # 注意:恢复多平台矩阵后,各腿报告同名会互相覆盖,需按腿重命名后再上传
+          if compgen -G 'report/*.json' >/dev/null; then
+            gh release upload "$CN_TAG" report/*.json --clobber --repo "$GITHUB_REPOSITORY"
+            echo "覆盖率报告已附带: https://github.com/$GITHUB_REPOSITORY/releases/tag/$CN_TAG"
+          fi
           echo "已发布: https://github.com/$GITHUB_REPOSITORY/releases/tag/$CN_TAG"
