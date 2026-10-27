@@ -6,8 +6,8 @@
 
 1. 校验上游结构(package.json / tauri.conf.json / 翻译表 / 补丁脚本),缺失即报错退出,
    绝不静默产出英文版;
-2. build.beforeBuildCommand 追加 patch_dist.py 调用 —— 在 vite build 之后、Tauri 打包之前
-   对 dist 产物做精确全等替换(唯一构建链侵入点,自动幂等);
+2. build.beforeBuildCommand 追加 patch_dist.mjs 调用 —— 在 vite build 之后、Tauri 打包之前
+   由 Node+acorn 对 dist 产物做精确全等替换(唯一构建链侵入点,自动幂等);
 3. bundle.createUpdaterArtifacts 置为 false —— 本仓库没有官方 TAURI_SIGNING_PRIVATE_KEY,
    保留该开关 tauri build 会直接失败;
 4. (默认开启,--no-rename 关闭)productName 与主窗口标题改为 "Terax CN",
@@ -68,7 +68,7 @@ def main() -> int:
         fail(f'未找到 {pkg_path} —— 上游结构可能已变化')
 
     patch_script = (Path(args.patch_script).resolve() if args.patch_script
-                    else Path(__file__).resolve().parent / 'patch_dist.py')
+                    else Path(__file__).resolve().parent / 'patch_dist.mjs')
     map_path = Path(args.map).resolve()
     report_path = Path(args.report).resolve()
     if not patch_script.is_file():
@@ -106,7 +106,7 @@ def main() -> int:
     changes: list[tuple[str, str, str]] = []
 
     bbc = build['beforeBuildCommand']
-    if 'patch_dist.py' in bbc:
+    if 'patch_dist.mjs' in bbc:
         print('[apply-i18n] beforeBuildCommand 已挂载补丁,跳过(幂等)')
     else:
         # Tauri 在 Windows 下执行 before* 命令时引号不会被 shell 剥离(实测原样进 argv),
@@ -116,7 +116,7 @@ def main() -> int:
             if ' ' in str(p):
                 fail(f'{label}路径包含空格({p}):Tauri 在 Windows 下执行 beforeBuildCommand '
                      '时引号无法安全转义,请把本仓库与 runner 工作目录放在无空格路径下')
-        cmd = (f' && python {patch_script.as_posix()}'
+        cmd = (f' && node {patch_script.as_posix()}'
                f' --dist {dist_abs.as_posix()}'
                f' --map {map_path.as_posix()}'
                f' --report {report_path.as_posix()}'

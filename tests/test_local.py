@@ -1,16 +1,17 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""terax-cn 本地测试:验证 patch_dist.py 与 apply_i18n.py 的关键行为。
+"""terax-cn 本地测试:验证 patch_dist.mjs(Node+acorn)与 apply_i18n.py 的关键行为。
 
 无需 pytest,直接运行:python tests/test_local.py
 覆盖:
-1. 字符串字面量精确全等替换(双/单/反引号),反引号含插值跳过;
-2. 防误伤:子串、未加引号标识符、API 路径、协议值(不在翻译表)不被触碰;
-3. HTML:文本节点、白名单属性、lang 属性;
-4. 失败路径:dist 缺失、替换次数低于下限(防静默英文版)、非法翻译表;
-5. apply_i18n:挂载 beforeBuildCommand、关闭 createUpdaterArtifacts、
-   应用改名、幂等重跑、--no-rename、结构缺失报错、非法翻译表报错;
-6. CRLF 保持:Windows 文本模式不改变换行符。
+1. 字符串字面量精确全等替换(双/单/反引号),含 ${} 的模板串跳过;
+2. 【错位回归】含引号的 JS 正则字面量不再带偏扫描(旧正则方案的死穴);
+3. 防误伤:子串、未加引号标识符、API 路径、协议值(不在翻译表)不被触碰;
+4. HTML:文本节点、白名单属性、lang 属性;
+5. 失败路径:dist 缺失、替换次数低于下限(防静默英文版)、非法翻译表、JS 解析失败;
+6. apply_i18n:挂载 beforeBuildCommand、关闭 createUpdaterArtifacts、应用改名、
+   幂等重跑、--no-rename、结构缺失报错、非法翻译表报错、路径含空格报错;
+7. CRLF 保持。
 """
 
 from __future__ import annotations
@@ -24,9 +25,7 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
 SCRIPTS = REPO / 'scripts'
-sys.path.insert(0, str(SCRIPTS))
-
-import patch_dist  # noqa: E402
+NODE_PATCH = SCRIPTS / 'patch_dist.mjs'
 
 PASS = 0
 FAIL = 0
@@ -42,21 +41,33 @@ def check(name: str, cond: bool, detail: str = '') -> None:
         print(f'FAIL  {name}  {detail}')
 
 
+def map_path() -> Path:
+    return REPO / 'i18n' / 'translations.json'
+
+
+def run_patch(dist: Path, report: Path, *extra: str) -> subprocess.CompletedProcess:
+    return subprocess.run(
+        ['node', str(NODE_PATCH), '--dist', str(dist), '--map', str(map_path()),
+         '--report', str(report), *extra],
+        capture_output=True, text=True)
+
+
 def make_dist(tmp: Path) -> Path:
     dist = tmp / 'dist'
     (dist / 'assets').mkdir(parents=True)
-    # 模拟最小化产物:真键、陷阱混合
+    # 模拟最小化产物:真键、陷阱、以及【错位回归】——正则字面量里含引号
     bundle = (
-        'const a="Cancel";const b=\'Close Anyway\';const c=`no matches`;'
-        'const d=`run ${x}`;const e="Cancelled";\n'
+        'const re0=/["\']/;const a="Cancel";const b=\'Close Anyway\';\n'
+        'const re1=/[\'"\\\\]/g;const c=`no matches`;const d=`run ${x}`;const e="Cancelled";\n'
         'const f="CancelNow";const g={Cancel:1,Close:2};invoke("pty_list_shells");listen("error",h);\n'
         'if(state==="done")log("running");const i="A process is running. Closing this tab will terminate it.";\n'
         'const j=\'Quit Terax?\';const k="Don\'t ask again about running processes";\n'
         'const l="Ask Terax anything   -   # for snippets and commands, @ for files";\n'
         'const m="Lines of history kept per terminal. Higher uses more RAM (~3 KB / line).";\n'
+        'const n=/\'\'/;const o="New Space";const p="Open settings";\n'
     )
-    (dist / 'assets' / 'index-Ab12Cd34.js').write_text(bundle, encoding='utf-8', newline='')
-    (dist / 'assets' / 'index-Ab12Cd34.js.map').write_text('{"version":3}', encoding='utf-8')
+    (dist / 'assets' / 'main-Ab12Cd34.js').write_text(bundle, encoding='utf-8', newline='')
+    (dist / 'assets' / 'main-Ab12Cd34.js.map').write_text('{"version":3}', encoding='utf-8')
     html = (
         '<!doctype html>\n'
         '<html lang="en"><head><title>Terax</title></head>\n'
@@ -68,22 +79,18 @@ def make_dist(tmp: Path) -> Path:
     return dist
 
 
-def map_path() -> Path:
-    return REPO / 'i18n' / 'translations.json'
-
-
 def test_patch_dist(tmp: Path) -> None:
-    print('[patch_dist]')
+    print('[patch_dist.mjs]')
     dist = make_dist(tmp)
     report_path = tmp / 'i18n-report.json'
-    rc = patch_dist.main(['--dist', str(dist), '--map', str(map_path()),
-                          '--report', str(report_path)])
-    check('exit 0', rc == 0, f'rc={rc}')
+    r = run_patch(dist, report_path)
+    check('exit 0', r.returncode == 0, r.stderr)
 
-    js = (dist / 'assets' / 'index-Ab12Cd34.js').read_text(encoding='utf-8')
-    check('双引号替换', 'const a="取消"' in js)
-    check('单引号替换', "const b='仍然关闭'" in js)
-    check('反引号静态替换', 'const c=`无匹配`' in js)
+    js = (dist / 'assets' / 'main-Ab12Cd34.js').read_text(encoding='utf-8')
+    check('错位回归:正则含引号后的字符串仍被替换', 'const a="取消"' in js)
+    check('错位回归:单引号串', "const b='仍然关闭'" in js or 'const b="仍然关闭"' in js)
+    check('错位回归:反引号串', '`无匹配`' in js or '"无匹配"' in js)
+    check('错位回归:文件尾字符串', '"新建空间"' in js and '"打开设置"' in js)
     check('反引号含插值跳过', 'const d=`run ${x}`' in js)
     check('子串不替换(Cancelled)', 'const e="Cancelled"' in js)
     check('前缀不替换(CancelNow)', 'const f="CancelNow"' in js)
@@ -95,8 +102,9 @@ def test_patch_dist(tmp: Path) -> None:
     check('含撇号句子替换', '不再询问正在运行的进程' in js)
     check('AI 占位符替换', '向 Terax 提问任何问题' in js)
     check('设置描述替换', '每个终端保留的历史行数' in js)
-    check('退出 Terax 替换', "const j='退出 Terax？'" in js)
-    check('.map 文件未动', (dist / 'assets' / 'index-Ab12Cd34.js.map').read_text(encoding='utf-8') == '{"version":3}')
+    check('退出 Terax 替换', "退出 Terax？" in js)
+    check('正则字面量未被改动', 'const re0=/["\']/;' in js and "const re1=/['\"\\\\]/g;" in js)
+    check('.map 文件未动', (dist / 'assets' / 'main-Ab12Cd34.js.map').read_text(encoding='utf-8') == '{"version":3}')
 
     html = (dist / 'index.html').read_text(encoding='utf-8')
     check('HTML 文本节点+title 替换', '<div title="关闭" name="Close">未保存的更改</div>' in html)
@@ -110,12 +118,12 @@ def test_patch_dist(tmp: Path) -> None:
     report = json.loads(report_path.read_text(encoding='utf-8'))
     check('报告 replacements>0', report['summary']['replacements'] > 0)
     check('报告含未命中键', isinstance(report['unused_keys'], list))
+    check('报告无解析失败', report['parse_failed'] == [])
 
     # CRLF 保持:构造带 \r\n 的文件,替换后仍为 \r\n
     crlf = dist / 'assets' / 'crlf.js'
     crlf.write_bytes('const x="Cancel";\r\nconst y="Close";\r\n'.encode('utf-8'))
-    patch_dist.main(['--dist', str(dist), '--map', str(map_path()),
-                     '--report', str(report_path)])
+    run_patch(dist, report_path)
     check('CRLF 保持', b'\r\n' in crlf.read_bytes() and b'\r\r\n' not in crlf.read_bytes())
     check('幂等重跑', 'const x="取消"' in crlf.read_text(encoding='utf-8'))
 
@@ -123,21 +131,27 @@ def test_patch_dist(tmp: Path) -> None:
     empty_dist = tmp / 'dist-empty'
     empty_dist.mkdir()
     (empty_dist / 'a.js').write_text('const q="zzz-unknown";', encoding='utf-8')
-    rc2 = patch_dist.main(['--dist', str(empty_dist), '--map', str(map_path()),
-                           '--report', str(tmp / 'r2.json'), '--min-replacements', '1'])
-    check('零替换退出码 3', rc2 == 3, f'rc={rc2}')
+    rc2 = run_patch(empty_dist, tmp / 'r2.json', '--min-replacements', '1')
+    check('零替换退出码 3', rc2.returncode == 3, f'rc={rc2.returncode}')
 
     # 失败路径:dist 不存在
-    rc3 = patch_dist.main(['--dist', str(tmp / 'nope'), '--map', str(map_path()),
-                           '--report', str(tmp / 'r3.json')])
-    check('dist 缺失退出码 2', rc3 == 2, f'rc={rc3}')
+    rc3 = run_patch(tmp / 'nope', tmp / 'r3.json')
+    check('dist 缺失退出码 2', rc3.returncode == 2, f'rc={rc3.returncode}')
 
     # 失败路径:翻译表含非字符串值
     bad_map = tmp / 'bad-map.json'
     bad_map.write_text('{"Save": 123}', encoding='utf-8')
-    rc4 = patch_dist.main(['--dist', str(dist), '--map', str(bad_map),
-                           '--report', str(tmp / 'r4.json')])
-    check('非法翻译表退出码 2', rc4 == 2, f'rc={rc4}')
+    rc4 = run_patch(dist, tmp / 'r4.json') if False else subprocess.run(
+        ['node', str(NODE_PATCH), '--dist', str(dist), '--map', str(bad_map),
+         '--report', str(tmp / 'r4.json')], capture_output=True, text=True)
+    check('非法翻译表退出码 2', rc4.returncode == 2, f'rc={rc4.returncode}')
+
+    # 失败路径:JS 无法解析 → 退出码 4
+    broken_dist = tmp / 'dist-broken'
+    broken_dist.mkdir()
+    (broken_dist / 'broken.js').write_text('const = ;;;', encoding='utf-8')
+    rc5 = run_patch(broken_dist, tmp / 'r5.json', '--min-replacements', '0')
+    check('JS 解析失败退出码 4', rc5.returncode == 4, f'rc={rc5.returncode}')
 
 
 # 与上游 v0.9.0 真实文件一致的夹具(摘自 crynta/terax-ai tag v0.9.0)
@@ -192,7 +206,8 @@ def test_apply_i18n(tmp: Path) -> None:
     conf = json.loads((upstream / 'src-tauri' / 'tauri.conf.json').read_text(encoding='utf-8'))
     bbc = conf['build']['beforeBuildCommand']
     check('beforeBuildCommand 已追加补丁调用',
-          'patch_dist.py' in bbc and bbc.startswith('pnpm build:cli && pnpm build &&'))
+          'patch_dist.mjs' in bbc and bbc.startswith('pnpm build:cli && pnpm build &&'))
+    check('调用的是 node 而非 python', ' node ' in bbc and 'python' not in bbc)
     check('补丁调用带 --dist/--map/--report',
           '--dist' in bbc and '--map' in bbc and '--report' in bbc)
     check('拼接命令不含引号(Tauri Windows 引号陷阱)', '"' not in bbc)
@@ -204,7 +219,7 @@ def test_apply_i18n(tmp: Path) -> None:
     r2 = run_apply(tmp, upstream)
     check('apply 幂等退出码 0', r2.returncode == 0, r2.stderr)
     conf2 = json.loads((upstream / 'src-tauri' / 'tauri.conf.json').read_text(encoding='utf-8'))
-    check('幂等:不重复追加', conf2['build']['beforeBuildCommand'].count('patch_dist.py') == 1)
+    check('幂等:不重复追加', conf2['build']['beforeBuildCommand'].count('patch_dist.mjs') == 1)
 
     upstream_nr = make_upstream(tmp, name='terax-nr')
     r3 = run_apply(tmp, upstream_nr, '--no-rename')
