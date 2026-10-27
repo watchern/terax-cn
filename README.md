@@ -23,7 +23,7 @@ release,发现新版本即拉取源码、打上汉化补丁、构建三平台安
 │   1. tauri.conf.json 的 beforeBuildCommand 追加     │
 │      patch_dist.py 调用(vite 产物替换)             │
 │   2. createUpdaterArtifacts → false(无官方签名私钥)│
-│   3. productName → "Terax CN"(可与官方版并存)      │
+│   3. productName → "Terax-CN"(可与官方版并存)      │
 │ pnpm install → tauri-action 构建                    │
 │   └ vite build 后自动执行 patch_dist.py:           │
 │      对 dist 产物做「整串精确全等」的字符串替换     │

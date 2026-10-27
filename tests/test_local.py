@@ -214,7 +214,7 @@ def test_apply_i18n(tmp: Path) -> None:
     check('dist 路径按 frontendDist 解析',
           str((upstream / 'dist').resolve()).replace('\\', '/') in bbc.replace('\\', '/'))
     check('createUpdaterArtifacts 已关闭', conf['bundle']['createUpdaterArtifacts'] is False)
-    check('productName 已改名', conf['productName'] == 'Terax CN')
+    check('productName 已改名', conf['productName'] == 'Terax-CN')
 
     r2 = run_apply(tmp, upstream)
     check('apply 幂等退出码 0', r2.returncode == 0, r2.stderr)

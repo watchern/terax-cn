@@ -10,7 +10,7 @@
    由 Node+acorn 对 dist 产物做精确全等替换(唯一构建链侵入点,自动幂等);
 3. bundle.createUpdaterArtifacts 置为 false —— 本仓库没有官方 TAURI_SIGNING_PRIVATE_KEY,
    保留该开关 tauri build 会直接失败;
-4. (默认开启,--no-rename 关闭)productName 与主窗口标题改为 "Terax CN",
+4. (默认开启,--no-rename 关闭)productName 与主窗口标题改为 "Terax-CN",
    使中文版与官方版可并存安装、互不覆盖;
 5. 打印变更摘要;在 GitHub Actions 中同步写入 $GITHUB_STEP_SUMMARY。
 
@@ -55,7 +55,7 @@ def main() -> int:
     ap.add_argument('--report', required=True, help='dist 汉化统计报告输出路径(必须在 dist 之外)')
     ap.add_argument('--patch-script', default=None,
                     help='patch_dist.py 路径,默认取本脚本同目录')
-    ap.add_argument('--app-name', default='Terax CN', help='改名后的应用名')
+    ap.add_argument('--app-name', default='Terax-CN', help='改名后的应用名')
     ap.add_argument('--no-rename', action='store_true', help='不改 productName/窗口标题')
     args = ap.parse_args()
 

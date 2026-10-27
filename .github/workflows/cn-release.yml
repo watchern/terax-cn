@@ -158,7 +158,7 @@ jobs:
             Terax 中文汉化版,基于官方 [${{ needs.check.outputs.upstream_tag }}](https://github.com/crynta/terax-ai/releases/tag/${{ needs.check.outputs.upstream_tag }})(commit ${{ env.UPSTREAM_SHA }})自动构建。
 
             - 界面文案采用「构建后精确替换」方案汉化,不影响程序逻辑;
-            - 应用名为 **Terax CN**,可与官方版并存安装;
+            - 应用名为 **Terax-CN**,可与官方版并存安装;
             - macOS 安装包未签名:首次打开请在 App 上**右键 → 打开**;
             - 应用内官方检查更新指向英文版,**请勿在中文版内点官方更新**,请以本仓库 Release 为准;
             - 翻译覆盖范围见本次 Actions 运行产物 i18n-report-*(未覆盖文案可在本仓库 i18n/translations.json 补充)。
@@ -185,7 +185,7 @@ jobs:
           pushd "$WORK" >/dev/null
           chmod +x "./$BASENAME"
           "./$BASENAME" --appimage-extract >/dev/null
-          # productName 为 Terax CN 时主二进制名可能为 terax/terax-cn/Terax CN,做宽匹配
+          # productName 为 Terax-CN 时主二进制名可能为 terax/terax-cn/Terax-CN,做宽匹配
           ls squashfs-root/usr/bin | grep -qi '^terax' || { echo "AppImage 内缺少 terax 主程序"; ls squashfs-root/usr/bin; exit 1; }
           find squashfs-root \( -type f -o -type l \) -name 'libwayland-*.so*' -print -delete
           curl -fsSL -o appimagetool.AppImage \
