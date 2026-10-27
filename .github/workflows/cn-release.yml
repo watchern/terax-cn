@@ -73,15 +73,18 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - platform: macos-latest
-            args: --target aarch64-apple-darwin
-            rust-target: aarch64-apple-darwin
-          - platform: macos-latest
-            args: --target x86_64-apple-darwin
-            rust-target: x86_64-apple-darwin
-          - platform: ubuntu-22.04
-            args: ''
-            rust-target: ''
+          # 暂时只打 Windows 包;恢复 Linux/macOS 时取消下面的注释即可。
+          # 注意:恢复后若 v<版本>-cn release 已存在,check 会跳过,
+          # 需手动触发并勾选 force 才会重建同版本。
+          # - platform: macos-latest
+          #   args: --target aarch64-apple-darwin
+          #   rust-target: aarch64-apple-darwin
+          # - platform: macos-latest
+          #   args: --target x86_64-apple-darwin
+          #   rust-target: x86_64-apple-darwin
+          # - platform: ubuntu-22.04
+          #   args: ''
+          #   rust-target: ''
           - platform: windows-latest
             args: ''
             rust-target: ''
