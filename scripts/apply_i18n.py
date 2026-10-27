@@ -109,10 +109,17 @@ def main() -> int:
     if 'patch_dist.py' in bbc:
         print('[apply-i18n] beforeBuildCommand 已挂载补丁,跳过(幂等)')
     else:
-        cmd = (f' && python "{patch_script.as_posix()}"'
-               f' --dist "{dist_abs.as_posix()}"'
-               f' --map "{map_path.as_posix()}"'
-               f' --report "{report_path.as_posix()}"'
+        # Tauri 在 Windows 下执行 before* 命令时引号不会被 shell 剥离(实测原样进 argv),
+        # 因此拼接的命令绝不能带引号;GH runner 路径无空格,可直接裸写,但含空格路径必须提前拦下。
+        for label, p in (('补丁脚本', patch_script), ('dist', dist_abs),
+                         ('翻译表', map_path), ('报告', report_path)):
+            if ' ' in str(p):
+                fail(f'{label}路径包含空格({p}):Tauri 在 Windows 下执行 beforeBuildCommand '
+                     '时引号无法安全转义,请把本仓库与 runner 工作目录放在无空格路径下')
+        cmd = (f' && python {patch_script.as_posix()}'
+               f' --dist {dist_abs.as_posix()}'
+               f' --map {map_path.as_posix()}'
+               f' --report {report_path.as_posix()}'
                f' --min-replacements 1')
         build['beforeBuildCommand'] = bbc + cmd
         changes.append(('build.beforeBuildCommand', bbc, build['beforeBuildCommand']))

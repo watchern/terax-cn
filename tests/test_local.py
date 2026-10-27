@@ -195,6 +195,7 @@ def test_apply_i18n(tmp: Path) -> None:
           'patch_dist.py' in bbc and bbc.startswith('pnpm build:cli && pnpm build &&'))
     check('补丁调用带 --dist/--map/--report',
           '--dist' in bbc and '--map' in bbc and '--report' in bbc)
+    check('拼接命令不含引号(Tauri Windows 引号陷阱)', '"' not in bbc)
     check('dist 路径按 frontendDist 解析',
           str((upstream / 'dist').resolve()).replace('\\', '/') in bbc.replace('\\', '/'))
     check('createUpdaterArtifacts 已关闭', conf['bundle']['createUpdaterArtifacts'] is False)
@@ -226,6 +227,17 @@ def test_apply_i18n(tmp: Path) -> None:
          '--map', str(bad_map), '--report', str(tmp / 'r5.json')],
         capture_output=True, text=True)
     check('嵌套翻译表被拒绝', r5.returncode == 1, f'rc={r5.returncode}')
+
+    # 路径含空格:必须提前拦下并报错(Tauri Windows 引号陷阱)
+    upstream6 = make_upstream(tmp, name='terax-space')
+    spaced = tmp / 'with space'
+    spaced.mkdir()
+    r6 = subprocess.run(
+        [sys.executable, str(SCRIPTS / 'apply_i18n.py'), '--upstream', str(upstream6),
+         '--map', str(map_path()), '--report', str(spaced / 'i18n-report.json')],
+        capture_output=True, text=True)
+    check('报告路径含空格被拒绝', r6.returncode == 1 and '空格' in (r6.stderr + r6.stdout),
+          f'rc={r6.returncode}')
 
 
 def main() -> int:
