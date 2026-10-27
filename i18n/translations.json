@@ -277,6 +277,7 @@
   "No unstaged changes": "暂无未暂存的更改",
   "Unknown source control error": "未知源代码管理错误",
   "Cancel": "取消",
+  "Open-source AI-native terminal emulator": "非官方中文分发 · 基于 Apache-2.0 开源项目 Terax 构建，与官方无关",
   "Close": "关闭",
   "Close Anyway": "仍然关闭",
   "Quit Anyway": "仍然退出",
@@ -284,7 +285,7 @@
   "Close Terminal?": "关闭终端？",
   "A process is running. Closing this tab will terminate it.": "有进程正在运行，关闭此标签页将终止该进程。",
   "Don't ask again about running processes": "不再询问正在运行的进程",
-  "Quit Terax?": "退出 Terax？",
+  "Quit Terax?": "退出 Terax-CN？",
   "Close Tabs to the Right": "关闭右侧标签页",
   "Close Other Tabs": "关闭其他标签页",
   "Checking...": "检查中…",
@@ -292,7 +293,7 @@
   "Maximize": "最大化",
   "Restore": "还原",
   "Type directly in the terminal": "直接在终端中输入",
-  "Ask Terax anything   -   # for snippets and commands, @ for files": "向 Terax 提问任何问题   -   输入 # 使用片段与命令，@ 引用文件",
+  "Ask Terax anything   -   # for snippets and commands, @ for files": "向 Terax-CN 提问任何问题   -   输入 # 使用片段与命令，@ 引用文件",
   "Listening…": "正在聆听…",
   "Transcribing…": "正在转写…",
   "No messages yet": "暂无消息",
@@ -373,5 +374,5 @@
   "Ask before closing a terminal tab or quitting while a command is still running. Unsaved editor changes are always confirmed.": "在命令仍在运行时关闭终端标签页或退出应用前先询问。未保存的编辑器更改则始终会确认。",
   "Agents": "智能体",
   "Coding agent notifications": "编码智能体通知",
-  "Alert when a coding agent needs your input or finishes. Native notification when Terax is unfocused, in-app otherwise.": "当编码智能体需要你的输入或完成任务时发出提醒。Terax 未聚焦时使用系统通知，否则在应用内提醒。"
+  "Alert when a coding agent needs your input or finishes. Native notification when Terax is unfocused, in-app otherwise.": "当编码智能体需要你的输入或完成任务时发出提醒。Terax-CN 未聚焦时使用系统通知，否则在应用内提醒。"
 }

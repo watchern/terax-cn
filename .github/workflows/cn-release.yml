@@ -157,6 +157,8 @@ jobs:
           releaseBody: |
             Terax 中文汉化版,基于官方 [${{ needs.check.outputs.upstream_tag }}](https://github.com/crynta/terax-ai/releases/tag/${{ needs.check.outputs.upstream_tag }})(commit ${{ env.UPSTREAM_SHA }})自动构建。
 
+            **⚠️ 非官方翻译版本(社区分发):与 Crynta/官方无隶属;按 Apache-2.0 保留原许可与版权声明,未使用官方 Logo,安装包内附带许可文本。**
+
             - 界面文案采用「构建后精确替换」方案汉化,不影响程序逻辑;
             - 应用名为 **Terax-CN**,可与官方版并存安装;
             - macOS 安装包未签名:首次打开请在 App 上**右键 → 打开**;

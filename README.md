@@ -1,4 +1,4 @@
-﻿# Terax 中文版(terax-cn)
+# Terax 中文版(terax-cn)
 
 Terax([crynta/terax-ai](https://github.com/crynta/terax-ai))的**中文版自动构建工厂**。
 本仓库不存放任何上游源码,只保留流程与翻译表;GitHub Actions 每天自动检查官方
@@ -100,6 +100,14 @@ tests/test_local.py                # 本地测试(无需 pytest,python tests/tes
 - **请勿在中文版内点官方检查更新**:会引导到英文官方包,更新请以本仓库 Release 为准;
 - 上游若大幅重构构建配置(如 `beforeBuildCommand` 字段变更),CI 会显式失败并给出
   中文错误说明,按提示调整 `apply_i18n.py` 即可。
+
+## 许可与商标合规
+
+- 上游 Terax 采用 Apache-2.0;本分发完整保留其许可与版权(安装包内附带 `licenses/terax-apache-2.0.txt`);
+- 应用内显著位置(设置 → 关于)声明**非官方中文分发**;发布说明同步声明;
+- Apache-2.0 不授予商标权:应用内不使用官方 Logo(图标已全部替换),产品名沿用 Terax-CN 属保留风险做法,若上游提出异议可随时通过 `--app-name` 参数更名;
+- 设置 → 关于 中的「基于 Terax」「crynta/terax-ai」为描述性注明来源,属正当引用;
+- 本项目与 Crynta/官方无隶属。
 
 ## 首次启用
 

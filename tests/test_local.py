@@ -100,9 +100,9 @@ def test_patch_dist(tmp: Path) -> None:
     check('协议值不替换', 'state==="done"' in js and 'log("running")' in js)
     check('长句替换', '有进程正在运行，关闭此标签页将终止该进程。' in js)
     check('含撇号句子替换', '不再询问正在运行的进程' in js)
-    check('AI 占位符替换', '向 Terax 提问任何问题' in js)
+    check('AI 占位符替换', '向 Terax-CN 提问任何问题' in js)
     check('设置描述替换', '每个终端保留的历史行数' in js)
-    check('退出 Terax 替换', "退出 Terax？" in js)
+    check('退出 Terax 替换', "退出 Terax-CN？" in js)
     check('正则字面量未被改动', 'const re0=/["\']/;' in js and "const re1=/['\"\\\\]/g;" in js)
     check('原型链键不被替换(constructor/toString)', 'const q="constructor"' in js and 'const r="toString"' in js)
     check('.map 文件未动', (dist / 'assets' / 'main-Ab12Cd34.js.map').read_text(encoding='utf-8') == '{"version":3}')
@@ -172,14 +172,28 @@ REAL_CONF = {
     "bundle": {
         "active": True,
         "createUpdaterArtifacts": True,
-        "targets": "all"
+        "targets": "all",
+        "icon": ["icons/32x32.png", "icons/128x128.png", "icons/128x128@2x.png", "icons/icon.icns", "icons/icon.ico"],
+        "publisher": "Crynta",
+        "copyright": "Copyright 2026 Crynta",
+        "resources": {},
+        "longDescription": "Terax — an open-source AI-native terminal emulator.",
+        "windows": {
+            "nsis": {"languages": ["English"]}
+        },
+        "fileAssociations": [
+            {"name": "Terax Document", "role": "Editor", "mimeType": "text/plain", "ext": ["txt"]}
+        ]
     }
 }
 
 
 def make_upstream(tmp: Path, conf: dict | None = None, name: str = 'terax') -> Path:
     upstream = tmp / name
-    (upstream / 'src-tauri').mkdir(parents=True, exist_ok=True)
+    (upstream / 'src-tauri' / 'icons').mkdir(parents=True, exist_ok=True)
+    (upstream / 'public').mkdir(parents=True, exist_ok=True)
+    (upstream / 'LICENSE').write_text('Apache License 2.0', encoding='utf-8')
+    (upstream / 'public' / 'logo.png').write_bytes(b'old-logo')
     (upstream / 'package.json').write_text(json.dumps({
         "name": "terax", "version": "0.9.0",
         "packageManager": "pnpm@11.9.0+sha512.x",
@@ -217,6 +231,18 @@ def test_apply_i18n(tmp: Path) -> None:
           str((upstream / 'dist').resolve()).replace('\\', '/') in bbc.replace('\\', '/'))
     check('createUpdaterArtifacts 已关闭', conf['bundle']['createUpdaterArtifacts'] is False)
     check('productName 已改名', conf['productName'] == 'Terax-CN')
+    check('identifier 已替换', conf['identifier'] == 'io.github.watchern.teraxcn')
+    check('图标已替换', (upstream / 'src-tauri' / 'icons' / 'icon.ico').read_bytes()
+          == (REPO / 'assets' / 'brand' / 'icon.ico').read_bytes())
+    check('favicon 已替换', (upstream / 'public' / 'logo.png').read_bytes()
+          == (REPO / 'assets' / 'brand' / 'logo.png').read_bytes())
+    check('LICENSE 随分发', conf['bundle']['resources']['../LICENSE'] == 'licenses/terax-apache-2.0.txt')
+    check('NSIS 追加简体中文', 'SimpChinese' in conf['bundle']['windows']['nsis']['languages'])
+    check('文件关联去商标', conf['bundle']['fileAssociations'][0]['name'] == 'Terax-CN Document')
+    check('包描述非官方声明', 'unofficial' in conf['bundle']['longDescription'].lower())
+    resolved = json.loads((tmp / 'translations.resolved.json').read_text(encoding='utf-8'))
+    check('解析表注入品牌键', resolved.get('Terax') == 'Terax-CN'
+          and resolved.get('app.crynta.terax') == 'io.github.watchern.teraxcn')
 
     r2 = run_apply(tmp, upstream)
     check('apply 幂等退出码 0', r2.returncode == 0, r2.stderr)
@@ -227,6 +253,8 @@ def test_apply_i18n(tmp: Path) -> None:
     r3 = run_apply(tmp, upstream_nr, '--no-rename')
     conf3 = json.loads((upstream_nr / 'src-tauri' / 'tauri.conf.json').read_text(encoding='utf-8'))
     check('--no-rename 保留 productName', r3.returncode == 0 and conf3['productName'] == 'Terax')
+    check('--no-rename 保留 identifier 与官方图标', conf3['identifier'] == 'app.crynta.terax'
+          and not (upstream_nr / 'src-tauri' / 'icons' / 'icon.ico').exists())
 
     # 结构缺失:无 tauri.conf.json
     broken = tmp / 'terax-broken'
