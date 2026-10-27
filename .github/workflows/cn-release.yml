@@ -41,6 +41,7 @@ jobs:
       cn_tag: ${{ steps.check.outputs.cn_tag }}
     steps:
       - name: 比对上游 release 与本仓库已有中文版
+        id: check
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
