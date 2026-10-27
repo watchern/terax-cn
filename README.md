@@ -1,4 +1,4 @@
-# Terax 中文版(terax-cn)
+﻿# Terax 中文版(terax-cn)
 
 Terax([crynta/terax-ai](https://github.com/crynta/terax-ai))的**中文版自动构建工厂**。
 本仓库不存放任何上游源码,只保留流程与翻译表;GitHub Actions 每天自动检查官方
@@ -21,11 +21,11 @@ release,发现新版本即拉取源码、打上汉化补丁、构建三平台安
 │ git clone 官方 tag 源码 → terax/                    │
 │ python scripts/apply_i18n.py   ← 唯一的"补丁"动作  │
 │   1. tauri.conf.json 的 beforeBuildCommand 追加     │
-│      patch_dist.py 调用(vite 产物替换)             │
+│      patch_dist.mjs 调用(vite 产物替换)             │
 │   2. createUpdaterArtifacts → false(无官方签名私钥)│
 │   3. productName → "Terax-CN"(可与官方版并存)      │
 │ pnpm install → tauri-action 构建                    │
-│   └ vite build 后自动执行 patch_dist.py:           │
+│   └ vite build 后自动执行 patch_dist.mjs:           │
 │      对 dist 产物做「整串精确全等」的字符串替换     │
 │ AppImage 剥离陈旧 libwayland 并重打包(与官方同源)  │
 └─────────────────────────────────────────────────────┘
@@ -68,7 +68,7 @@ release,发现新版本即拉取源码、打上汉化补丁、构建三平台安
 ```
 .github/workflows/cn-release.yml   # 自动构建流水线(每日检查 + 矩阵构建 + 发布)
 scripts/apply_i18n.py              # 挂载补丁到上游源码树(CI 中、构建前运行)
-scripts/patch_dist.py              # dist 产物汉化(vite build 后、Tauri 打包前运行)
+scripts/patch_dist.mjs              # dist 产物汉化(vite build 后、Tauri 打包前运行)
 i18n/translations.json             # 翻译表:扁平 {英文: 中文},人工维护
 tests/test_local.py                # 本地测试(无需 pytest,python tests/test_local.py)
 分析.md / 设计.md                  # 原始方案分析与设计约束

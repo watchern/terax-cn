@@ -87,6 +87,10 @@ function* walk(dir) {
 // ---------- JS:acorn 解析 + 精确替换 ----------
 function collectReplacements(ast, mapping) {
   const out = [];
+  // 关键:必须用 hasOwn 判断,否则 mapping["constructor"]/"toString"/"valueOf" 等
+  // 会沿原型链命中 Object.prototype 的函数,导致这些字符串被替换成 undefined,
+  // 运行时走到对应代码路径直接崩溃(实测整页白/黑屏)。
+  const lookup = (key) => (Object.hasOwn(mapping, key) ? mapping[key] : undefined);
   function visit(node) {
     if (!node || typeof node !== 'object') return;
     if (Array.isArray(node)) {
@@ -94,14 +98,14 @@ function collectReplacements(ast, mapping) {
       return;
     }
     if (node.type === 'Literal' && typeof node.value === 'string') {
-      const cn = mapping[node.value];
+      const cn = lookup(node.value);
       if (cn !== undefined) out.push({ start: node.start, end: node.end, key: node.value, cn });
       return; // 字符串字面量无子节点
     }
     if (node.type === 'TemplateLiteral' && node.expressions.length === 0) {
       const quasi = node.quasis[0];
       const key = quasi.value.cooked ?? quasi.value.raw;
-      const cn = mapping[key];
+      const cn = lookup(key);
       if (cn !== undefined) out.push({ start: node.start, end: node.end, key, cn });
       return;
     }
@@ -129,7 +133,7 @@ function patchJsFile(file, mapping) {
     }
   }
   const reps = collectReplacements(ast, mapping);
-  const hits = {};
+  const hits = Object.create(null); // 无原型:避免 'constructor' 等键撞上原型链成员
   let output = text;
   reps.sort((a, b) => b.start - a.start); // 从后往前替换,位置不失效
   for (const r of reps) {
@@ -141,7 +145,7 @@ function patchJsFile(file, mapping) {
 
 // ---------- HTML:文本节点 + 白名单属性 + lang ----------
 function patchHtmlFile(text, mapping) {
-  const hits = {};
+  const hits = Object.create(null);
   for (const en of Object.keys(mapping).sort((a, b) => b.length - a.length)) {
     const cn = mapping[en];
     const textDelimited = `>${en}<`;
@@ -196,7 +200,13 @@ for (const file of walk(distDir)) {
   }
 }
 
-const total = Object.values(filesReport).reduce((sum, hits) => sum + Object.values(hits).reduce((a, b) => a + b, 0), 0);
+let total = 0;
+for (const hits of Object.values(filesReport)) {
+  for (const k of Object.keys(hits)) {
+    const n = Number(hits[k]);
+    if (Number.isFinite(n)) total += n;
+  }
+}
 const keysUsed = new Set(Object.values(filesReport).flatMap((hits) => Object.keys(hits)));
 const unused = Object.keys(mapping).filter((k) => !keysUsed.has(k)).sort();
 const report = {

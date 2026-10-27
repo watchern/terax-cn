@@ -64,7 +64,7 @@ def make_dist(tmp: Path) -> Path:
         'const j=\'Quit Terax?\';const k="Don\'t ask again about running processes";\n'
         'const l="Ask Terax anything   -   # for snippets and commands, @ for files";\n'
         'const m="Lines of history kept per terminal. Higher uses more RAM (~3 KB / line).";\n'
-        'const n=/\'\'/;const o="New Space";const p="Open settings";\n'
+        'const n=/\'\'/;const o="New Space";const p="Open settings";const q="constructor";const r="toString";\n'
     )
     (dist / 'assets' / 'main-Ab12Cd34.js').write_text(bundle, encoding='utf-8', newline='')
     (dist / 'assets' / 'main-Ab12Cd34.js.map').write_text('{"version":3}', encoding='utf-8')
@@ -104,6 +104,7 @@ def test_patch_dist(tmp: Path) -> None:
     check('设置描述替换', '每个终端保留的历史行数' in js)
     check('退出 Terax 替换', "退出 Terax？" in js)
     check('正则字面量未被改动', 'const re0=/["\']/;' in js and "const re1=/['\"\\\\]/g;" in js)
+    check('原型链键不被替换(constructor/toString)', 'const q="constructor"' in js and 'const r="toString"' in js)
     check('.map 文件未动', (dist / 'assets' / 'main-Ab12Cd34.js.map').read_text(encoding='utf-8') == '{"version":3}')
 
     html = (dist / 'index.html').read_text(encoding='utf-8')
@@ -117,6 +118,7 @@ def test_patch_dist(tmp: Path) -> None:
 
     report = json.loads(report_path.read_text(encoding='utf-8'))
     check('报告 replacements>0', report['summary']['replacements'] > 0)
+    check('报告 replacements 保持数值类型', isinstance(report['summary']['replacements'], int))
     check('报告含未命中键', isinstance(report['unused_keys'], list))
     check('报告无解析失败', report['parse_failed'] == [])
 

@@ -70,3 +70,5 @@
 4. markdown / preview / terminal / theme / lsp 模块未列目录。
 5. 截断文件的缺失尾部需换途径（如按行范围抓取）补采，尤其 SourceControlPanel 与 FileExplorer 的右键菜单与确认框。
 6. GeneralSection.tsx（21.7KB）未抓：现有 99 条已覆盖 General 区大部分文案，剩余增量待核对。
+
+## 2026-10-28 追记: 移除 failed/Home 两个跨边界风险键;记录根因(原型链查找致 constructor/toString 字面量被替换为 undefined,运行时整页崩溃),已改用 Object.hasOwn 根治。
