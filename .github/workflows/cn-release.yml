@@ -220,7 +220,10 @@ jobs:
       GH_TOKEN: ${{ github.token }}
       CN_TAG: ${{ needs.check.outputs.cn_tag }}
     steps:
-      - name: 将草稿 Release 转为正式发布
+      - name: 将草稿 Release 转为正式发布并写入构建信息
         run: |
-          gh release edit "$CN_TAG" --repo "$GITHUB_REPOSITORY" --draft=false --latest
+          set -euo pipefail
+          BODY="$(gh release view "$CN_TAG" --repo "$GITHUB_REPOSITORY" --json body --jq .body)"
+          METADATA="\n\n---\n\n构建信息:第 ${{ github.run_number }} 次构建 · 上游 ${{ needs.check.outputs.upstream_tag }} · $(date -u '+%Y-%m-%d %H:%M UTC')"
+          gh release edit "$CN_TAG" --repo "$GITHUB_REPOSITORY" --draft=false --latest --notes "${BODY}${METADATA}"
           echo "已发布: https://github.com/$GITHUB_REPOSITORY/releases/tag/$CN_TAG"
