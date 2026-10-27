@@ -1,0 +1,219 @@
+# Terax 中文版自动构建流水线
+#
+# 流程:每天北京时间 10:00(UTC 02:00)检查官方 crynta/terax-ai 最新 release,
+# 出现未构建过的新版本时,拉取对应 tag 源码 → 挂载汉化补丁(apply_i18n.py)→
+# tauri-action 构建三平台安装包(macOS arm64/x86_64、Linux、Windows)→
+# 以 "v<版本>-cn" 为 tag 自动发布 release。
+#
+# 本仓库只保留流程与翻译表,不在本地维护任何上游源码。
+# 手动触发:Actions 页面 Run workflow,可勾选 force 强制重建当前上游最新版。
+
+name: Terax 中文版构建
+
+on:
+  schedule:
+    - cron: '0 2 * * *' # UTC 02:00 = 北京时间 10:00(GitHub cron 允许几分钟级延迟)
+  workflow_dispatch:
+    inputs:
+      force:
+        description: 忽略版本检查,强制重建上游最新版
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+
+concurrency:
+  group: terax-cn-release
+  cancel-in-progress: false
+
+env:
+  UPSTREAM_REPO: crynta/terax-ai
+
+jobs:
+  check:
+    name: 检查上游新版本
+    runs-on: ubuntu-latest
+    outputs:
+      build: ${{ steps.check.outputs.build }}
+      upstream_tag: ${{ steps.check.outputs.upstream_tag }}
+      version: ${{ steps.check.outputs.version }}
+      cn_tag: ${{ steps.check.outputs.cn_tag }}
+    steps:
+      - name: 比对上游 release 与本仓库已有中文版
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          upstream_tag="$(gh api "repos/$UPSTREAM_REPO/releases/latest" --jq .tag_name)"
+          version="${upstream_tag#v}"
+          cn_tag="v${version}-cn"
+          build=false
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ "${{ github.event.inputs.force }}" = "true" ]; then
+            build=true
+            echo "手动触发 force=true,强制构建"
+          elif ! gh release view "$cn_tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            build=true
+            echo "发现未构建的上游新版本"
+          fi
+          {
+            echo "upstream_tag=$upstream_tag"
+            echo "version=$version"
+            echo "cn_tag=$cn_tag"
+            echo "build=$build"
+          } >> "$GITHUB_OUTPUT"
+          echo "上游: $upstream_tag | 中文版: $cn_tag | 需要构建: $build"
+
+  build:
+    name: 构建 (${{ matrix.platform }}${{ matrix.rust-target != '' && format(' · {0}', matrix.rust-target) || '' }})
+    if: needs.check.outputs.build == 'true'
+    needs: check
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: macos-latest
+            args: --target aarch64-apple-darwin
+            rust-target: aarch64-apple-darwin
+          - platform: macos-latest
+            args: --target x86_64-apple-darwin
+            rust-target: x86_64-apple-darwin
+          - platform: ubuntu-22.04
+            args: ''
+            rust-target: ''
+          - platform: windows-latest
+            args: ''
+            rust-target: ''
+    runs-on: ${{ matrix.platform }}
+    steps:
+      - name: 检出本仓库(流程与翻译表)
+        uses: actions/checkout@v7
+
+      - name: 克隆上游源码 ${{ needs.check.outputs.upstream_tag }}
+        shell: bash
+        env:
+          UPSTREAM_TAG: ${{ needs.check.outputs.upstream_tag }}
+        run: |
+          git clone --depth 1 --branch "$UPSTREAM_TAG" "https://github.com/$UPSTREAM_REPO.git" terax
+          echo "UPSTREAM_SHA=$(git -C terax rev-parse HEAD)" >> "$GITHUB_ENV"
+          echo "上游 commit: $(git -C terax rev-parse HEAD)"
+
+      - name: 安装 Linux 构建依赖
+        if: matrix.platform == 'ubuntu-22.04'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libgtk-3-dev librsvg2-dev libssl-dev patchelf
+
+      # pnpm 版本读取 terax/package.json 的 packageManager 字段,随上游自动同步
+      - name: 安装 pnpm
+        uses: pnpm/action-setup@v6
+        with:
+          package_json_file: terax/package.json
+
+      - name: 安装 Node.js 24
+        uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: pnpm
+          cache-dependency-path: terax/pnpm-lock.yaml
+
+      - name: 安装 Rust stable
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.rust-target }}
+
+      - name: 缓存 Rust 构建产物
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: ./terax/src-tauri -> target
+          key: ${{ matrix.platform }}-${{ matrix.rust-target }}
+
+      - name: 挂载汉化补丁
+        run: python scripts/apply_i18n.py --upstream terax --map i18n/translations.json --report "${{ runner.temp }}/i18n-report.json"
+
+      - name: 安装前端依赖
+        run: pnpm install --frozen-lockfile
+        working-directory: terax
+
+      - name: 构建 Tauri 应用并上传到草稿 Release
+        id: tauri
+        uses: tauri-apps/tauri-action@v1
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          # 上游 build-cli.mjs 依赖该变量确定 sidecar(terax-cli)的编译目标
+          TERAX_CLI_TARGET: ${{ matrix.rust-target }}
+        with:
+          projectPath: terax
+          tagName: ${{ needs.check.outputs.cn_tag }}
+          releaseName: Terax ${{ needs.check.outputs.version }} 中文版
+          releaseBody: |
+            Terax 中文汉化版,基于官方 [${{ needs.check.outputs.upstream_tag }}](https://github.com/crynta/terax-ai/releases/tag/${{ needs.check.outputs.upstream_tag }})(commit ${{ env.UPSTREAM_SHA }})自动构建。
+
+            - 界面文案采用「构建后精确替换」方案汉化,不影响程序逻辑;
+            - 应用名为 **Terax CN**,可与官方版并存安装;
+            - macOS 安装包未签名:首次打开请在 App 上**右键 → 打开**;
+            - 应用内官方检查更新指向英文版,**请勿在中文版内点官方更新**,请以本仓库 Release 为准;
+            - 翻译覆盖范围见本次 Actions 运行产物 i18n-report-*(未覆盖文案可在本仓库 i18n/translations.json 补充)。
+          releaseDraft: true
+          prerelease: false
+          args: ${{ matrix.args }}
+
+      # 与官方 release.yml 同源的 AppImage 兼容修复:剥离打包进镜像的陈旧
+      # libwayland 库(宿主 1.20 vs 新 Mesa 需要 1.22+ 符号,否则 EGL_BAD_PARAMETER),
+      # 重打包后用 --clobber 覆盖已上传的同名资产。无签名环节。
+      - name: 修复 AppImage wayland 兼容并覆盖上传
+        if: matrix.platform == 'ubuntu-22.04'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CN_TAG: ${{ needs.check.outputs.cn_tag }}
+        run: |
+          set -euo pipefail
+          APPIMAGE="$(ls terax/src-tauri/target/release/bundle/appimage/*.AppImage | head -n1)"
+          BASENAME="$(basename "$APPIMAGE")"
+          echo "修复: $APPIMAGE"
+          WORK="$(mktemp -d)"
+          cp "$APPIMAGE" "$WORK/"
+          pushd "$WORK" >/dev/null
+          chmod +x "./$BASENAME"
+          "./$BASENAME" --appimage-extract >/dev/null
+          # productName 为 Terax CN 时主二进制名可能为 terax/terax-cn/Terax CN,做宽匹配
+          ls squashfs-root/usr/bin | grep -qi '^terax' || { echo "AppImage 内缺少 terax 主程序"; ls squashfs-root/usr/bin; exit 1; }
+          find squashfs-root \( -type f -o -type l \) -name 'libwayland-*.so*' -print -delete
+          curl -fsSL -o appimagetool.AppImage \
+            https://github.com/AppImage/appimagetool/releases/download/1.9.1/appimagetool-x86_64.AppImage
+          chmod +x appimagetool.AppImage
+          ARCH=x86_64 ./appimagetool.AppImage --appimage-extract-and-run squashfs-root "$BASENAME"
+          rm -rf squashfs-root
+          chmod +x "./$BASENAME"
+          "./$BASENAME" --appimage-extract >/dev/null
+          if find squashfs-root -name 'libwayland-*.so*' -print -quit | grep -q .; then
+            echo "重打包后仍存在 wayland 库"; exit 1
+          fi
+          ls squashfs-root/usr/bin | grep -qi '^terax' || { echo "重打包后缺少 terax 主程序"; ls squashfs-root/usr/bin; exit 1; }
+          popd >/dev/null
+          cp "$WORK/$BASENAME" "$APPIMAGE"
+          gh release upload "$CN_TAG" "$APPIMAGE" --clobber --repo "$GITHUB_REPOSITORY"
+          echo "AppImage 已修复并覆盖上传"
+
+      - name: 上传汉化覆盖率报告
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: i18n-report-${{ strategy.job-index }}
+          path: ${{ runner.temp }}/i18n-report.json
+          if-no-files-found: ignore
+
+  publish:
+    name: 发布 Release
+    needs: [check, build]
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+      CN_TAG: ${{ needs.check.outputs.cn_tag }}
+    steps:
+      - name: 将草稿 Release 转为正式发布
+        run: |
+          gh release edit "$CN_TAG" --repo "$GITHUB_REPOSITORY" --draft=false --latest
+          echo "已发布: https://github.com/$GITHUB_REPOSITORY/releases/tag/$CN_TAG"
