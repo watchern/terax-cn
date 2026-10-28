@@ -68,6 +68,36 @@ jobs:
           } >> "$GITHUB_OUTPUT"
           echo "上游: $upstream_tag | 中文版: $cn_tag | 需要构建: $build"
 
+      - name: 清理遗留草稿并创建本次构建的草稿 Release
+        if: steps.check.outputs.build == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CN_TAG: ${{ steps.check.outputs.cn_tag }}
+          VERSION: ${{ steps.check.outputs.version }}
+          UPSTREAM_TAG: ${{ steps.check.outputs.upstream_tag }}
+        run: |
+          set -euo pipefail
+          # 删除历史遗留的同名草稿(tauri-action 曾把部分资产传进隐藏草稿,公开 release 上看不到)
+          for id in $(gh api "repos/$GITHUB_REPOSITORY/releases" --jq '.[] | select(.draft == true and .tag_name == $env.CN_TAG) | .id'); do
+            gh api -X DELETE "repos/$GITHUB_REPOSITORY/releases/$id"
+            echo "已删除遗留草稿 release #$id"
+          done
+          notes_file="$RUNNER_TEMP/release-notes.md"
+          cat > "$notes_file" <<EOF
+          Terax 中文分发(非官方),基于官方 [${UPSTREAM_TAG}](https://github.com/crynta/terax-ai/releases/tag/${UPSTREAM_TAG})自动构建。
+
+          ⚠️ 非官方翻译版本(社区分发):与 Crynta/官方无隶属;按 Apache-2.0 保留原许可与版权声明,未使用官方 Logo,安装包内附带许可文本。
+
+          - 界面文案采用「构建后精确替换」方案汉化,不影响程序逻辑;
+          - 应用名为 Terax-CN,可与官方版并存安装;
+          - Linux AppImage 兼容性已修复;deb/rpm 面向 Debian 12 / Ubuntu 22.04+ 等新版系;
+          - 请勿在应用内点击官方检查更新,更新以本仓库 Release 为准;
+          - 翻译覆盖率见附件 i18n-report.json(按平台分节)。
+          EOF
+          sed -i 's/^          //' "$notes_file"
+          gh release create "$CN_TAG" --draft --target "$GITHUB_SHA" \
+            --title "Terax $VERSION 中文分发" --notes-file "$notes_file" || echo "草稿已存在,复用"
+
   build:
     name: 构建 (${{ matrix.platform }}${{ matrix.rust-target != '' && format(' · {0}', matrix.rust-target) || '' }})
     if: needs.check.outputs.build == 'true'
@@ -144,7 +174,7 @@ jobs:
         run: pnpm install --frozen-lockfile
         working-directory: terax
 
-      - name: 构建 Tauri 应用并上传到草稿 Release
+      - name: 构建 Tauri 应用
         id: tauri
         uses: tauri-apps/tauri-action@v1
         env:
@@ -153,20 +183,6 @@ jobs:
           TERAX_CLI_TARGET: ${{ matrix.rust-target }}
         with:
           projectPath: terax
-          tagName: ${{ needs.check.outputs.cn_tag }}
-          releaseName: Terax ${{ needs.check.outputs.version }} 中文版
-          releaseBody: |
-            Terax 中文汉化版,基于官方 [${{ needs.check.outputs.upstream_tag }}](https://github.com/crynta/terax-ai/releases/tag/${{ needs.check.outputs.upstream_tag }})(commit ${{ env.UPSTREAM_SHA }})自动构建。
-
-            **⚠️ 非官方翻译版本(社区分发):与 Crynta/官方无隶属;按 Apache-2.0 保留原许可与版权声明,未使用官方 Logo,安装包内附带许可文本。**
-
-            - 界面文案采用「构建后精确替换」方案汉化,不影响程序逻辑;
-            - 应用名为 **Terax-CN**,可与官方版并存安装;
-            - macOS 安装包未签名:首次打开请在 App 上**右键 → 打开**;
-            - 应用内官方检查更新指向英文版,**请勿在中文版内点官方更新**,请以本仓库 Release 为准;
-            - 翻译覆盖范围见本次 Actions 运行产物 i18n-report-*(未覆盖文案可在本仓库 i18n/translations.json 补充)。
-          releaseDraft: true
-          prerelease: false
           args: ${{ matrix.args }}
 
       # 与官方 release.yml 同源的 AppImage 兼容修复:剥离打包进镜像的陈旧
@@ -206,6 +222,31 @@ jobs:
           cp "$WORK/$BASENAME" "$APPIMAGE"
           gh release upload "$CN_TAG" "$APPIMAGE" --clobber --repo "$GITHUB_REPOSITORY"
           echo "AppImage 已修复并覆盖上传"
+
+      - name: 上传安装包到草稿 Release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CN_TAG: ${{ needs.check.outputs.cn_tag }}
+        run: |
+          set -euo pipefail
+          files=()
+          if [ "${{ matrix.platform }}" = "windows-latest" ]; then
+            for f in terax/src-tauri/target/release/bundle/nsis/*.exe terax/src-tauri/target/release/bundle/msi/*.msi; do
+              if [ -f "$f" ]; then files+=("$f"); fi
+            done
+          else
+            for f in terax/src-tauri/target/release/bundle/deb/*.deb \
+                     terax/src-tauri/target/release/bundle/rpm/*.rpm \
+                     terax/src-tauri/target/release/bundle/appimage/*.AppImage; do
+              if [ -f "$f" ]; then files+=("$f"); fi
+            done
+          fi
+          if [ ${#files[@]} -eq 0 ]; then
+            echo "未找到安装包"; exit 1
+          fi
+          gh release upload "$CN_TAG" "${files[@]}" --clobber --repo "$GITHUB_REPOSITORY"
+          echo "已上传 ${#files[@]} 个安装包"
 
       - name: 记录打包产物清单(诊断)
         if: always()
