@@ -77,18 +77,19 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # 暂时只打 Windows 包;恢复 Linux/macOS 时取消下面的注释即可。
-          # 注意:恢复后若 v<版本>-cn release 已存在,check 会跳过,
-          # 需手动触发并勾选 force 才会重建同版本。
+          # macOS 暂停;恢复时取消注释并勾选 force(否则已存在的 release 会跳过构建)
           # - platform: macos-latest
           #   args: --target aarch64-apple-darwin
           #   rust-target: aarch64-apple-darwin
           # - platform: macos-latest
           #   args: --target x86_64-apple-darwin
           #   rust-target: x86_64-apple-darwin
-          # - platform: ubuntu-22.04
-          #   args: ''
-          #   rust-target: ''
+          # Linux 固定 ubuntu-22.04:glibc 2.35 + webkit2gtk-4.1 即 Tauri v2 兼容下限
+          # (musl 不可行:GUI 依赖系统 GTK/WebKitGTK C 库,无 musl 版;更低版本发行版
+          # 本身缺 webkit2gtk-4.1,降低构建机版本无额外收益)
+          - platform: ubuntu-22.04
+            args: ''
+            rust-target: ''
           - platform: windows-latest
             args: ''
             rust-target: ''
@@ -226,18 +227,21 @@ jobs:
         uses: actions/download-artifact@v7
         with:
           pattern: i18n-report-*
-          merge-multiple: true
           path: report
 
       - name: 将草稿 Release 转为正式发布并写入构建信息
         run: |
           set -euo pipefail
-          BODY="$(gh release view "$CN_TAG" --repo "$GITHUB_REPOSITORY" --json body --jq .body)"
+          BODY="$(gh release view "$CN_TAG" --repo "$GITHUB_REPOSITORY" --json body --jq .body | sed '/^构建信息:/d')"
           METADATA="$(printf '\n\n---\n\n构建信息:第 %s 次构建 · 上游 %s · %s' "${{ github.run_number }}" "${{ needs.check.outputs.upstream_tag }}" "$(date -u '+%Y-%m-%d %H:%M UTC')")"
           gh release edit "$CN_TAG" --repo "$GITHUB_REPOSITORY" --draft=false --latest --notes "${BODY}${METADATA}"
-          # 注意:恢复多平台矩阵后,各腿报告同名会互相覆盖,需按腿重命名后再上传
-          if compgen -G 'report/*.json' >/dev/null; then
-            gh release upload "$CN_TAG" report/*.json --clobber --repo "$GITHUB_REPOSITORY"
+          # 各腿报告按工件名重命名后上传,避免多平台同名覆盖
+          for d in report/*/; do
+            [ -f "$d/i18n-report.json" ] || continue
+            cp "$d/i18n-report.json" "report/$(basename "$d").json"
+          done
+          if compgen -G 'report/i18n-report-*.json' >/dev/null; then
+            gh release upload "$CN_TAG" report/i18n-report-*.json --clobber --repo "$GITHUB_REPOSITORY"
             echo "覆盖率报告已附带: https://github.com/$GITHUB_REPOSITORY/releases/tag/$CN_TAG"
           fi
           echo "已发布: https://github.com/$GITHUB_REPOSITORY/releases/tag/$CN_TAG"
