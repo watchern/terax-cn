@@ -207,12 +207,24 @@ jobs:
           gh release upload "$CN_TAG" "$APPIMAGE" --clobber --repo "$GITHUB_REPOSITORY"
           echo "AppImage 已修复并覆盖上传"
 
+      - name: 记录打包产物清单(诊断)
+        if: always()
+        shell: bash
+        run: |
+          {
+            echo "=== target/release/bundle 产物清单 ==="
+            find terax/src-tauri/target/release/bundle -type f 2>/dev/null || echo '(bundle 目录不存在)'
+          } > "${{ runner.temp }}/bundle-listing.txt"
+          cat "${{ runner.temp }}/bundle-listing.txt"
+
       - name: 上传汉化覆盖率报告
         if: always()
         uses: actions/upload-artifact@v7
         with:
           name: i18n-report-${{ strategy.job-index }}
-          path: ${{ runner.temp }}/i18n-report.json
+          path: |
+            ${{ runner.temp }}/i18n-report.json
+            ${{ runner.temp }}/bundle-listing.txt
           if-no-files-found: ignore
 
   publish:
@@ -232,12 +244,14 @@ jobs:
       - name: 将草稿 Release 转为正式发布并写入构建信息
         run: |
           set -euo pipefail
-          # 各腿报告合并为单一 JSON(按平台分节),避免 release 上累积多份同用途文件
+          # 各腿报告合并为单一 JSON(按平台分节),附带打包产物清单,避免 release 上累积多份同用途文件
           mkdir -p merged
           for d in report/*/; do
             [ -f "$d/i18n-report.json" ] || continue
             name="$(basename "$d")"
-            jq -n --arg name "$name" --slurpfile r "$d/i18n-report.json" '{($name): $r[0]}' > "merged/$name.json"
+            [ -f "$d/bundle-listing.txt" ] || echo '(无清单)' > "$d/bundle-listing.txt"
+            jq -n --arg name "$name" --slurpfile r "$d/i18n-report.json" --rawfile ls "$d/bundle-listing.txt" \
+              '{($name): ($r[0] + {bundle_files: $ls})}' > "merged/$name.json"
           done
           jq -s 'add' merged/*.json > merged/i18n-report.json
           # 清理历史遗留的报告资产(旧命名/旧构建),再以固定名覆盖上传
