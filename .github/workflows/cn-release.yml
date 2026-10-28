@@ -232,16 +232,20 @@ jobs:
       - name: 将草稿 Release 转为正式发布并写入构建信息
         run: |
           set -euo pipefail
+          # 各腿报告合并为单一 JSON(按平台分节),避免 release 上累积多份同用途文件
+          mkdir -p merged
+          for d in report/*/; do
+            [ -f "$d/i18n-report.json" ] || continue
+            name="$(basename "$d")"
+            jq -n --arg name "$name" --slurpfile r "$d/i18n-report.json" '{($name): $r[0]}' > "merged/$name.json"
+          done
+          jq -s 'add' merged/*.json > merged/i18n-report.json
+          # 清理历史遗留的报告资产(旧命名/旧构建),再以固定名覆盖上传
+          for name in $(gh release view "$CN_TAG" --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets[].name | select(startswith("i18n-report"))'); do
+            gh release delete-asset "$CN_TAG" "$name" --repo "$GITHUB_REPOSITORY" -y
+          done
           BODY="$(gh release view "$CN_TAG" --repo "$GITHUB_REPOSITORY" --json body --jq .body | sed '/^构建信息:/d')"
           METADATA="$(printf '\n\n---\n\n构建信息:第 %s 次构建 · 上游 %s · %s' "${{ github.run_number }}" "${{ needs.check.outputs.upstream_tag }}" "$(date -u '+%Y-%m-%d %H:%M UTC')")"
           gh release edit "$CN_TAG" --repo "$GITHUB_REPOSITORY" --draft=false --latest --notes "${BODY}${METADATA}"
-          # 各腿报告按工件名重命名后上传,避免多平台同名覆盖
-          for d in report/*/; do
-            [ -f "$d/i18n-report.json" ] || continue
-            cp "$d/i18n-report.json" "report/$(basename "$d").json"
-          done
-          if compgen -G 'report/i18n-report-*.json' >/dev/null; then
-            gh release upload "$CN_TAG" report/i18n-report-*.json --clobber --repo "$GITHUB_REPOSITORY"
-            echo "覆盖率报告已附带: https://github.com/$GITHUB_REPOSITORY/releases/tag/$CN_TAG"
-          fi
+          gh release upload "$CN_TAG" merged/i18n-report.json --clobber --repo "$GITHUB_REPOSITORY"
           echo "已发布: https://github.com/$GITHUB_REPOSITORY/releases/tag/$CN_TAG"
