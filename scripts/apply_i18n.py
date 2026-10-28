@@ -157,7 +157,13 @@ def main() -> int:
             changes.append(('identifier', old_id, args.identifier))
 
         # 图标全套替换:按 tauri.conf 的 icon 清单逐项覆盖
-        icon_srcs = {'32x32.png', '128x128.png', '128x128@2x.png', 'icon.ico', 'icon.icns'}
+        def png_is_rgba(p: Path) -> bool:
+            """PNG IHDR 的 color type 字节:6 = truecolor+alpha(Tauri 宏强制要求)。"""
+            with open(p, 'rb') as f:
+                return f.read(26)[25] == 6
+
+        icon_srcs = {'32x32.png': 32, '128x128.png': 128, '128x128@2x.png': 256,
+                     'icon.ico': None, 'icon.icns': None}
         icons = bundle.get('icon')
         if not isinstance(icons, list) or not icons:
             fail('tauri.conf.json 缺少 bundle.icon 清单,无法替换图标')
@@ -166,8 +172,14 @@ def main() -> int:
             src = brand_dir / name
             if name not in icon_srcs or not src.is_file():
                 fail(f'图标清单出现未备料的文件名 {icon_rel}(brand 目录缺 {name}),请更新 assets/brand')
+            if name.endswith('.png') and not png_is_rgba(src):
+                fail(f'{src} 不是 RGBA PNG(Tauri generate_context! 宏会 panic),'
+                     '请重跑 scripts/make_brand.py 重新生成')
             dst = conf_path.parent / icon_rel
             shutil.copyfile(src, dst)
+        logo_src = brand_dir / 'logo.png'
+        if not png_is_rgba(logo_src):
+            fail(f'{logo_src} 不是 RGBA PNG,请重跑 scripts/make_brand.py')
         changes.append(('bundle.icon(全部替换)', 'Terax 官方图标', f'{app_name} 图标({len(icons)} 个文件)'))
 
         # 网页 favicon(设置页与主窗口标签页图标)

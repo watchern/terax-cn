@@ -236,6 +236,9 @@ def test_apply_i18n(tmp: Path) -> None:
           == (REPO / 'assets' / 'brand' / 'icon.ico').read_bytes())
     check('favicon 已替换', (upstream / 'public' / 'logo.png').read_bytes()
           == (REPO / 'assets' / 'brand' / 'logo.png').read_bytes())
+    check('品牌 PNG 均为 RGBA(Tauri 宏要求)',
+          all((REPO / 'assets' / 'brand' / f).read_bytes()[25] == 6
+              for f in ('32x32.png', '128x128.png', '128x128@2x.png', 'logo.png')))
     check('LICENSE 随分发', conf['bundle']['resources']['../LICENSE'] == 'licenses/terax-apache-2.0.txt')
     check('NSIS 追加简体中文', 'SimpChinese' in conf['bundle']['windows']['nsis']['languages'])
     check('文件关联去商标', conf['bundle']['fileAssociations'][0]['name'] == 'Terax-CN Document')
