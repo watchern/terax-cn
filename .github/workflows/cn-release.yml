@@ -1,9 +1,17 @@
 # Terax 中文版自动构建流水线
 #
 # 流程:每天北京时间 10:00(UTC 02:00)检查官方 crynta/terax-ai 最新 release,
-# 出现未构建过的新版本时,拉取对应 tag 源码 → 挂载汉化补丁(apply_i18n.py)→
-# tauri-action 构建三平台安装包(macOS arm64/x86_64、Linux、Windows)→
-# 以 "v<版本>-cn" 为 tag 自动发布 release。
+# 出现未构建过的新版本时:
+#   check   → 比对版本,创建草稿 Release;
+#   prepare → 单次完成所有平台一致的工作:克隆上游 tag 源码、挂载汉化补丁
+#             (apply_i18n.py)、前端构建(tsc + vite)与 dist 精确替换汉化
+#             (patch_dist.mjs),补丁后的源码连同前端产物打成 artifact;
+#   build   → 各平台腿下载该 artifact,只执行必须按平台编译打包的部分:
+#             Rust sidecar(build:cli)、主程序编译与安装包(tauri-action);
+#   publish → 合并翻译覆盖率与各平台产物清单,草稿转正式发布。
+#
+# 平台无关的重复工作只跑一次,每条构建腿省去克隆、补丁与前端构建,降低并行
+# 腿的资源占用;产物(dist)跨平台字节一致,汉化覆盖率报告也随之只产一份。
 #
 # 本仓库只保留流程与翻译表,不在本地维护任何上游源码。
 # 手动触发:Actions 页面 Run workflow,可勾选 force 强制重建当前上游最新版。
@@ -92,16 +100,120 @@ jobs:
           - 应用名为 Terax-CN,可与官方版并存安装;
           - Linux AppImage 兼容性已修复;deb/rpm 面向 Debian 12 / Ubuntu 22.04+ 等新版系;
           - 请勿在应用内点击官方检查更新,更新以本仓库 Release 为准;
-          - 翻译覆盖率见附件 i18n-report.json(按平台分节)。
+          - 翻译覆盖率与各平台产物清单见附件 i18n-report.json。
           EOF
           sed -i 's/^          //' "$notes_file"
           gh release create "$CN_TAG" --draft --target "$GITHUB_SHA" \
             --title "Terax $VERSION 中文分发" --notes-file "$notes_file" || echo "草稿已存在,复用"
 
+  prepare:
+    name: 准备(单次):源码补丁 + 前端构建
+    needs: check
+    if: needs.check.outputs.build == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: 检出本仓库(流程与翻译表)
+        uses: actions/checkout@v7
+
+      - name: 克隆上游源码 ${{ needs.check.outputs.upstream_tag }}
+        shell: bash
+        env:
+          UPSTREAM_TAG: ${{ needs.check.outputs.upstream_tag }}
+        run: |
+          git clone --depth 1 --branch "$UPSTREAM_TAG" "https://github.com/$UPSTREAM_REPO.git" terax
+          echo "上游 commit: $(git -C terax rev-parse HEAD)"
+
+      # pnpm 版本读取 terax/package.json 的 packageManager 字段,随上游自动同步
+      - name: 安装 pnpm
+        uses: pnpm/action-setup@v6
+        with:
+          package_json_file: terax/package.json
+
+      - name: 安装 Node.js 24
+        uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: pnpm
+          cache-dependency-path: terax/pnpm-lock.yaml
+
+      - name: 挂载汉化补丁
+        run: python scripts/apply_i18n.py --upstream terax --map i18n/translations.json --report "${{ runner.temp }}/i18n-report.json"
+
+      - name: 安装前端依赖
+        run: pnpm install --frozen-lockfile
+        working-directory: terax
+
+      # 补丁挂载后的 beforeBuildCommand 形如:
+      #   "<按平台的 sidecar 构建> && <前端构建> && node <patch_dist 绝对路径> --dist … --map …"
+      # 前端构建与 dist 汉化的产物跨平台字节一致,在此单次执行;sidecar 构建是
+      # Rust 编译,必须留给各平台腿。形态由 tests/test_local.py 锁定,若上游
+      # 重构构建链,下面的形态检查会显式失败并打印实际值。
+      - name: 构建前端并汉化 dist(跨平台一致,单次执行)
+        shell: bash
+        run: |
+          set -euo pipefail
+          bbc="$(jq -r '.build.beforeBuildCommand' terax/src-tauri/tauri.conf.json)"
+          case "$bbc" in
+            *" && node "*) : ;;
+            *) echo "beforeBuildCommand 未挂载补丁段: $bbc"; exit 1 ;;
+          esac
+          rest="${bbc#* && }"        # 去掉第一段(sidecar 构建)
+          patch_cmd="${rest##* && }" # 最后一段 = node patch_dist.mjs …(绝对路径且无空格)
+          frontend="${rest% && *}"   # 中段 = 前端构建
+          case "$patch_cmd" in
+            node\ *) : ;;
+            *) echo "补丁段形态异常: $patch_cmd"; exit 1 ;;
+          esac
+          cd terax
+          echo "前端构建: $frontend"
+          eval "$frontend"
+          echo "dist 汉化: $patch_cmd"
+          eval "$patch_cmd"
+
+      # 前端产物已就绪并随源码打包,各平台腿不再重复构建前端
+      - name: beforeBuildCommand 只保留 sidecar 构建
+        shell: bash
+        run: |
+          set -euo pipefail
+          bbc="$(jq -r '.build.beforeBuildCommand' terax/src-tauri/tauri.conf.json)"
+          leg_cmd="${bbc%% && *}"
+          tmp="$(mktemp)"
+          jq --arg cmd "$leg_cmd" '.build.beforeBuildCommand = $cmd' terax/src-tauri/tauri.conf.json > "$tmp"
+          mv "$tmp" terax/src-tauri/tauri.conf.json
+          echo "各平台腿 beforeBuildCommand: $leg_cmd"
+
+      - name: 打包补丁后源码(含前端产物;排除依赖、Rust 产物与上游 .git)
+        shell: bash
+        run: |
+          set -euo pipefail
+          tar -czf "$RUNNER_TEMP/terax-patched-src.tar.gz" \
+            --exclude='terax/.git' \
+            --exclude='*/node_modules' \
+            --exclude='terax/src-tauri/target' \
+            terax
+          du -h "$RUNNER_TEMP/terax-patched-src.tar.gz"
+
+      - name: 上传补丁后源码(供各平台构建腿下载)
+        uses: actions/upload-artifact@v7
+        with:
+          name: terax-patched-src
+          path: ${{ runner.temp }}/terax-patched-src.tar.gz
+          retention-days: 1
+
+      - name: 上传汉化覆盖率报告
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: i18n-report
+          path: ${{ runner.temp }}/i18n-report.json
+          retention-days: 1
+          if-no-files-found: ignore
+
   build:
     name: 构建 (${{ matrix.platform }}${{ matrix.rust-target != '' && format(' · {0}', matrix.rust-target) || '' }})
     if: needs.check.outputs.build == 'true'
-    needs: check
+    needs: [check, prepare]
     timeout-minutes: 120
     strategy:
       fail-fast: false
@@ -125,17 +237,16 @@ jobs:
             rust-target: ''
     runs-on: ${{ matrix.platform }}
     steps:
-      - name: 检出本仓库(流程与翻译表)
-        uses: actions/checkout@v7
+      # 源码、汉化补丁与前端产物由 prepare 单次产出;各腿只做按平台的编译与打包
+      - name: 下载 prepare 产出的补丁后源码
+        uses: actions/download-artifact@v7
+        with:
+          name: terax-patched-src
+          path: ${{ runner.temp }}
 
-      - name: 克隆上游源码 ${{ needs.check.outputs.upstream_tag }}
+      - name: 解开源码包(terax/ 落在工作区根)
         shell: bash
-        env:
-          UPSTREAM_TAG: ${{ needs.check.outputs.upstream_tag }}
-        run: |
-          git clone --depth 1 --branch "$UPSTREAM_TAG" "https://github.com/$UPSTREAM_REPO.git" terax
-          echo "UPSTREAM_SHA=$(git -C terax rev-parse HEAD)" >> "$GITHUB_ENV"
-          echo "上游 commit: $(git -C terax rev-parse HEAD)"
+        run: tar -xzf "$RUNNER_TEMP/terax-patched-src.tar.gz"
 
       - name: 安装 Linux 构建依赖
         if: matrix.platform == 'ubuntu-22.04'
@@ -167,9 +278,8 @@ jobs:
           workspaces: ./terax/src-tauri -> target
           key: ${{ matrix.platform }}-${{ matrix.rust-target }}
 
-      - name: 挂载汉化补丁
-        run: python scripts/apply_i18n.py --upstream terax --map i18n/translations.json --report "${{ runner.temp }}/i18n-report.json"
-
+      # tauri-action 经 pnpm 调用项目内的 @tauri-apps/cli,需要 node_modules;
+      # pnpm store 跨腿共享缓存,实际只是链接,开销很小
       - name: 安装前端依赖
         run: pnpm install --frozen-lockfile
         working-directory: terax
@@ -258,14 +368,13 @@ jobs:
           } > "${{ runner.temp }}/bundle-listing.txt"
           cat "${{ runner.temp }}/bundle-listing.txt"
 
-      - name: 上传汉化覆盖率报告
+      - name: 上传打包产物清单(诊断)
         if: always()
         uses: actions/upload-artifact@v7
         with:
-          name: i18n-report-${{ strategy.job-index }}
-          path: |
-            ${{ runner.temp }}/i18n-report.json
-            ${{ runner.temp }}/bundle-listing.txt
+          name: bundle-listing-${{ matrix.platform }}${{ matrix.rust-target != '' && format('-{0}', matrix.rust-target) || '' }}
+          path: ${{ runner.temp }}/bundle-listing.txt
+          retention-days: 1
           if-no-files-found: ignore
 
   publish:
@@ -276,25 +385,33 @@ jobs:
       GH_TOKEN: ${{ github.token }}
       CN_TAG: ${{ needs.check.outputs.cn_tag }}
     steps:
-      - name: 下载汉化覆盖率报告
+      - name: 下载汉化覆盖率报告(prepare 单份产出)
         uses: actions/download-artifact@v7
         with:
-          pattern: i18n-report-*
+          name: i18n-report
           path: report
+
+      - name: 下载各平台打包产物清单
+        uses: actions/download-artifact@v7
+        with:
+          pattern: bundle-listing-*
+          path: listings
 
       - name: 将草稿 Release 转为正式发布并写入构建信息
         run: |
           set -euo pipefail
-          # 各腿报告合并为单一 JSON(按平台分节),附带打包产物清单,避免 release 上累积多份同用途文件
+          # 合并为单一 JSON:翻译覆盖率(prepare 产出,仅一份)+ 按平台打包产物清单,
+          # 避免 release 上累积多份同用途文件
           mkdir -p merged
-          for d in report/*/; do
-            [ -f "$d/i18n-report.json" ] || continue
+          for d in listings/*/; do
             name="$(basename "$d")"
             [ -f "$d/bundle-listing.txt" ] || echo '(无清单)' > "$d/bundle-listing.txt"
-            jq -n --arg name "$name" --slurpfile r "$d/i18n-report.json" --rawfile ls "$d/bundle-listing.txt" \
-              '{($name): ($r[0] + {bundle_files: $ls})}' > "merged/$name.json"
+            jq -n --arg name "$name" --rawfile ls "$d/bundle-listing.txt" \
+              '{($name): $ls}' > "merged/$name.json"
           done
-          jq -s 'add' merged/*.json > merged/i18n-report.json
+          bundles="$(jq -s 'add' merged/*.json)"
+          jq -n --slurpfile i18n report/i18n-report.json --argjson bundles "$bundles" \
+            '{i18n: $i18n[0], bundles: $bundles}' > merged/i18n-report.json
           # 清理历史遗留的报告资产(旧命名/旧构建),再以固定名覆盖上传
           for name in $(gh release view "$CN_TAG" --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets[].name | select(startswith("i18n-report"))'); do
             gh release delete-asset "$CN_TAG" "$name" --repo "$GITHUB_REPOSITORY" -y

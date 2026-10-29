@@ -17,16 +17,24 @@ release,发现新版本即拉取源码、打上汉化补丁、构建三平台安
 └─────────────────────────────────────────────────────┘
         │
         ▼
-┌─ build(4 路并行矩阵,与官方 CI 同构)──────────────┐
+┌─ prepare(单次,所有平台共享)──────────────────────┐
 │ git clone 官方 tag 源码 → terax/                    │
 │ python scripts/apply_i18n.py   ← 唯一的"补丁"动作  │
 │   1. tauri.conf.json 的 beforeBuildCommand 追加     │
 │      patch_dist.mjs 调用(vite 产物替换)             │
 │   2. createUpdaterArtifacts → false(无官方签名私钥)│
 │   3. productName → "Terax-CN"(可与官方版并存)      │
-│ pnpm install → tauri-action 构建                    │
-│   └ vite build 后自动执行 patch_dist.mjs:           │
-│      对 dist 产物做「整串精确全等」的字符串替换     │
+│ pnpm install → 前端构建(tsc + vite)→              │
+│   patch_dist.mjs:对 dist 产物做「整串精确全等」替换 │
+│ 补丁后源码连同前端产物打成 artifact(只此一份)      │
+└─────────────────────────────────────────────────────┘
+        │
+        ▼
+┌─ build(按平台并行矩阵,与官方 CI 同构)────────────┐
+│ 下载 prepare 的 artifact → pnpm install             │
+│ tauri-action:只执行必须按平台编译的部分            │
+│   └ Rust sidecar(build:cli)+ 主程序编译与打包,    │
+│     前端产物已就绪,不再重复构建                     │
 │ AppImage 剥离陈旧 libwayland 并重打包(与官方同源)  │
 └─────────────────────────────────────────────────────┘
         │
@@ -66,7 +74,7 @@ release,发现新版本即拉取源码、打上汉化补丁、构建三平台安
 ## 文件结构
 
 ```
-.github/workflows/cn-release.yml   # 自动构建流水线(每日检查 + 矩阵构建 + 发布)
+.github/workflows/cn-release.yml   # 自动构建流水线(每日检查 + 单次准备 + 矩阵构建 + 发布)
 scripts/apply_i18n.py              # 挂载补丁到上游源码树(CI 中、构建前运行)
 scripts/patch_dist.mjs              # dist 产物汉化(vite build 后、Tauri 打包前运行)
 i18n/translations.json             # 翻译表:扁平 {英文: 中文},人工维护
@@ -79,8 +87,9 @@ tests/test_local.py                # 本地测试(无需 pytest,python tests/tes
 1. 在应用里看到未翻译的英文界面文案后,把**界面上的完整英文原串**(注意空格、
    省略号 `…`、标点要逐字符一致)加入 `i18n/translations.json`;
 2. 提交推送后手动触发一次 workflow(可勾选 force),或在下次官方发版时自动生效;
-3. 每次 CI 构建都会产出 `i18n-report-*` 工件,其中 `unused_keys` 是从未命中的词条
-   (可据此清理失效键),`files` 里能看到每个词条命中的文件与次数。
+3. 每次 CI 构建都会在 Release 附上单一的 `i18n-report.json`(`unused_keys` 是
+   从未命中的词条,可据此清理失效键;`files` 里能看到每个词条命中的文件与次数),
+   运行工件 `bundle-listing-*` 里是各平台的打包产物清单。
 
 翻译键来源:当前 99 条初始词条全部采集自上游 v0.9.0 真实源码
 (`CloseDialogs.tsx`、`tool.tsx`、`GeneralSection.tsx`、`AiComposerInput.tsx` 等)。
