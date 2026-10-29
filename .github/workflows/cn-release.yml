@@ -187,7 +187,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          tar -czf "$RUNNER_TEMP/terax-patched-src.tar.gz" \
+          tar -czf "$RUNNER_TEMP/terax-patched-src.tar.gz" --force-local \
             --exclude='terax/.git' \
             --exclude='*/node_modules' \
             --exclude='terax/src-tauri/target' \
@@ -246,7 +246,9 @@ jobs:
 
       - name: 解开源码包(terax/ 落在工作区根)
         shell: bash
-        run: tar -xzf "$RUNNER_TEMP/terax-patched-src.tar.gz"
+        # --force-local:Windows 下 $RUNNER_TEMP 形如 D:\a\_temp,GNU tar 会把
+        # 路径开头的 "D:" 解释为远程磁带主机(rsh 风格)导致无法打开文件
+        run: tar -xzf "$RUNNER_TEMP/terax-patched-src.tar.gz" --force-local
 
       - name: 安装 Linux 构建依赖
         if: matrix.platform == 'ubuntu-22.04'
