@@ -35,7 +35,8 @@ release,发现新版本即拉取源码、打上汉化补丁、构建三平台安
 │ tauri-action:只执行必须按平台编译的部分            │
 │   └ Rust sidecar(build:cli)+ 主程序编译与打包,    │
 │     前端产物已就绪,不再重复构建                     │
-│ AppImage 剥离陈旧 libwayland 并重打包(与官方同源)  │
+│ Linux:zig 链接器把 glibc 地板钉在 2.28;AppImage    │
+│ 剥离内嵌 GUI 运行库(WebKitGTK 4.1 由系统自备)      │
 └─────────────────────────────────────────────────────┘
         │
         ▼
@@ -104,6 +105,12 @@ tests/test_local.py                # 本地测试(无需 pytest,python tests/tes
 
 - **动态拼接文案不覆盖**:如 `"3 files have unsaved changes"` 这类带数字/复数变化的
   模板串,整串替换无法命中(会保持英文),属已知取舍;
+- **Linux 包要求 glibc ≥ 2.28,WebKitGTK 4.1 自备**:Rust 产物经 zig 链接器把 glibc
+  符号版本钉在 2.28(CentOS 8 及以上可运行);但 WebKitGTK 4.1、GTK3 等图形运行库
+  默认**不随包分发**,由目标系统提供——Ubuntu 22.04+ / Debian 12+ 先执行
+  `sudo apt install libwebkit2gtk-4.1-0 libgtk-3-0`;CentOS 8 / 麒麟 V10 / UOS 20 的
+  官方仓库没有 WebKitGTK 4.1(需要 WebKitGTK ≥ 2.40 + libsoup3),需自行编译提供。
+  官方 Terax 在这些老系统上同样无法运行,这是 Tauri v2 的生态约束,并非本分发引入;
 - **Rust 侧文案不覆盖**:原生对话框、Rust 返回的日志文本不在前端产物里;
 - **macOS 包未签名**:首次打开需右键 → 打开;
 - **请勿在中文版内点官方检查更新**:会引导到英文官方包,更新请以本仓库 Release 为准;

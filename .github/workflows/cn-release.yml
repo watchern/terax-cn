@@ -7,7 +7,10 @@
 #             (apply_i18n.py)、前端构建(tsc + vite)与 dist 精确替换汉化
 #             (patch_dist.mjs),补丁后的源码连同前端产物打成 artifact;
 #   build   → 各平台腿下载该 artifact,只执行必须按平台编译打包的部分:
-#             Rust sidecar(build:cli)、主程序编译与安装包(tauri-action);
+#             Rust sidecar(build:cli)、主程序编译与安装包(tauri-action)。
+#             Linux 腿另做两件事:用 zig 链接器把 Rust 产物的 glibc 符号版本
+#             钉在 2.28(CentOS 8 可运行);剥离 AppImage 内嵌的 GUI 运行库,
+#             WebKitGTK 4.1 / GTK3 等由目标系统自备(详见 README 兼容性说明);
 #   publish → 合并翻译覆盖率与各平台产物清单,草稿转正式发布。
 #
 # 平台无关的重复工作只跑一次,每条构建腿省去克隆、补丁与前端构建,降低并行
@@ -98,7 +101,10 @@ jobs:
 
           - 界面文案采用「构建后精确替换」方案汉化,不影响程序逻辑;
           - 应用名为 Terax-CN,可与官方版并存安装;
-          - Linux AppImage 兼容性已修复;deb/rpm 面向 Debian 12 / Ubuntu 22.04+ 等新版系;
+          - Linux 包要求 glibc ≥ 2.28(CentOS 8 可运行);WebKitGTK 4.1 / GTK3 运行库由
+            目标系统提供:Ubuntu 22.04+ / Debian 12+ 先执行
+            `sudo apt install libwebkit2gtk-4.1-0 libgtk-3-0`,CentOS 8 / 麒麟 V10 / UOS 20
+            等老系统仓库无 WebKitGTK 4.1,需自行编译提供(官方原版在这些系统上同样无法运行);
           - 请勿在应用内点击官方检查更新,更新以本仓库 Release 为准;
           - 翻译覆盖率与各平台产物清单见附件 i18n-report.json。
           EOF
@@ -226,9 +232,9 @@ jobs:
           # - platform: macos-latest
           #   args: --target x86_64-apple-darwin
           #   rust-target: x86_64-apple-darwin
-          # Linux 固定 ubuntu-22.04:glibc 2.35 + webkit2gtk-4.1 即 Tauri v2 兼容下限
-          # (musl 不可行:GUI 依赖系统 GTK/WebKitGTK C 库,无 musl 版;更低版本发行版
-          # 本身缺 webkit2gtk-4.1,降低构建机版本无额外收益)
+          # Linux 固定 ubuntu-22.04:编译期需要 webkit2gtk-4.1 开发库(Tauri v2 硬依赖),
+          # 它是能提供该库的发行版中 glibc 最低的;运行期地板与之解耦——由 zig 链接器把
+          # Rust 产物钉到 glibc 2.28,GUI 运行库剥离后由目标系统提供(见下方对应步骤)
           - platform: ubuntu-22.04
             args: ''
             rust-target: ''
@@ -236,6 +242,11 @@ jobs:
             args: ''
             rust-target: ''
     runs-on: ${{ matrix.platform }}
+    env:
+      # Linux 腿:glibc 符号版本在链接期选定,把链接器换成 zig(见下方步骤)即可把
+      # 地板钉在 2.28(CentOS 8)。RUSTFLAGS 参与 cargo 指纹,链接器变更必然触发重链接,
+      # 不会静默沿用旧链接产物;Windows 腿置空走默认链接器。
+      RUSTFLAGS: ${{ matrix.platform == 'ubuntu-22.04' && '-C linker=zigcc-2.28' || '' }}
     steps:
       # 源码、汉化补丁与前端产物由 prepare 单次产出;各腿只做按平台的编译与打包
       - name: 下载 prepare 产出的补丁后源码
@@ -278,7 +289,29 @@ jobs:
         uses: swatinem/rust-cache@v2
         with:
           workspaces: ./terax/src-tauri -> target
-          key: ${{ matrix.platform }}-${{ matrix.rust-target }}
+          # Linux 腿换 zig 链接器,缓存 key 隔离,避免与 gcc 链接的旧缓存混用
+          key: ${{ matrix.platform }}-${{ matrix.rust-target }}${{ matrix.platform == 'ubuntu-22.04' && '-glibc228' || '' }}
+
+      # zig 自带各版本 glibc 的链接存根:以 `zig cc -target x86_64-linux-gnu.2.28` 为
+      # 链接器(RUSTFLAGS -C linker 已在作业级注入),Rust 产物在链接期只取 2.28 存根
+      # 提供的符号版本,从而可在 CentOS 8 等老系统上运行。构建机本身仍是 ubuntu-22.04。
+      - name: 安装 Zig 并准备 2.28 链接器(Linux 腿)
+        if: matrix.platform == 'ubuntu-22.04'
+        shell: bash
+        run: |
+          set -euo pipefail
+          ZIG_ROOT=/opt/zig-0.13.0
+          mkdir -p "$ZIG_ROOT"
+          curl -fsSL https://ziglang.org/download/0.13.0/zig-linux-x86_64-0.13.0.tar.xz \
+            | tar -xJ --strip-components=1 -C "$ZIG_ROOT"
+          echo "$ZIG_ROOT" >> "$GITHUB_PATH"
+          bin="$HOME/.local/bin"
+          mkdir -p "$bin"
+          printf '%s\n' '#!/bin/sh' 'exec /opt/zig-0.13.0/zig cc -target x86_64-linux-gnu.2.28 "$@"' \
+            > "$bin/zigcc-2.28"
+          chmod +x "$bin/zigcc-2.28"
+          echo "$bin" >> "$GITHUB_PATH"
+          "$bin/zigcc-2.28" --version # 自检:zig 可用、2.28 目标合法
 
       # tauri-action 经 pnpm 调用项目内的 @tauri-apps/cli,需要 node_modules;
       # pnpm store 跨腿共享缓存,实际只是链接,开销很小
@@ -297,10 +330,17 @@ jobs:
           projectPath: terax
           args: ${{ matrix.args }}
 
-      # 与官方 release.yml 同源的 AppImage 兼容修复:剥离打包进镜像的陈旧
-      # libwayland 库(宿主 1.20 vs 新 Mesa 需要 1.22+ 符号,否则 EGL_BAD_PARAMETER),
-      # 重打包后用 --clobber 覆盖已上传的同名资产。无签名环节。
-      - name: 修复 AppImage wayland 兼容并覆盖上传
+      # AppImage 老系统兼容处理(目标:glibc ≥ 2.28 的宿主,如 CentOS 8):
+      # 1) 校验主程序与 sidecar 的 glibc/GLIBCXX/CXXABI 符号版本 ≤ CentOS 8 运行库
+      #    所提供的上限(超限即上游引入了新的原生依赖,需人工处理,绝不静默发布装不上的包);
+      # 2) linuxdeploy 会把整条 GUI 运行库栈(WebKitGTK/GTK3/gstreamer 等)打进镜像,
+      #    这些库既携带构建机的 glibc 要求,也带来宿主不匹配问题(陈旧 libwayland 曾
+      #    导致 EGL_BAD_PARAMETER),故全部剥离:WebKitGTK 4.1 / GTK3 由目标系统提供,
+      #    AppImage 因此不再开箱即用,需先装运行库(见 README 兼容性说明);
+      # 3) AppRun 换成最小脚本:只注入 LD_LIBRARY_PATH,不遮蔽宿主的输入法模块、
+      #    gio 模块与主题;
+      # 4) 重打包后用 --clobber 覆盖已上传的同名资产。无签名环节。
+      - name: AppImage 老系统兼容处理并覆盖上传
         if: matrix.platform == 'ubuntu-22.04'
         shell: bash
         env:
@@ -310,15 +350,50 @@ jobs:
           set -euo pipefail
           APPIMAGE="$(ls terax/src-tauri/target/release/bundle/appimage/*.AppImage | head -n1)"
           BASENAME="$(basename "$APPIMAGE")"
-          echo "修复: $APPIMAGE"
+          echo "处理: $APPIMAGE"
           WORK="$(mktemp -d)"
           cp "$APPIMAGE" "$WORK/"
           pushd "$WORK" >/dev/null
           chmod +x "./$BASENAME"
           "./$BASENAME" --appimage-extract >/dev/null
-          # productName 为 Terax-CN 时主二进制名可能为 terax/terax-cn/Terax-CN,做宽匹配
+
+          # 符号版本校验:取 objdump -T 中该前缀的最高版本,与 CentOS 8(glibc 2.28 /
+          # gcc-8 运行库)能提供的上限比较;无版本化引用视为通过
+          ver_max() { objdump -T "$1" 2>/dev/null | grep -oE "$2"'[0-9.]+' | sort -uV | tail -n1 || true; }
+          le_v() { [ "$(printf '%s\n%s\n' "$1" "$2" | sort -V | tail -n1)" = "$2" ]; }
+          floor_check() {
+            local f="$1" v
+            for pair in 'GLIBC_2\.|GLIBC_2.28' 'GLIBCXX_|GLIBCXX_3.4.24' 'CXXABI_|CXXABI_1.3.11'; do
+              v="$(ver_max "$f" "${pair%%|*}")"
+              [ -z "$v" ] && continue
+              echo "符号校验:$(basename "$f") 最高 $v(上限 ${pair##*|})"
+              le_v "$v" "${pair##*|}" || { echo "符号版本超过老系统上限: $f" >&2; return 1; }
+            done
+          }
+          shopt -s nullglob
+          for exe in squashfs-root/usr/bin/[Tt]erax*; do
+            floor_check "$exe"
+          done
+          shopt -u nullglob
+
+          # 剥离全部内嵌运行库(含符号链接)。注意:bundle.resources 装在
+          # usr/lib/<应用名>/ 下(内含 Apache-2.0 许可文本,属分发义务),非 .so 文件
+          # 一律保留
+          find squashfs-root/usr/lib \( -type f -o -type l \) -name '*.so*' -delete
+          [ -z "$(find squashfs-root/usr/lib \( -type f -o -type l \) -name '*.so*' -print -quit)" ] \
+            || { echo "仍有未剥离的运行库"; exit 1; }
+
+          # productName 为 Terax-CN 时主二进制名可能为 terax/terax-cn/Terax-CN,宽匹配
           ls squashfs-root/usr/bin | grep -qi '^terax' || { echo "AppImage 内缺少 terax 主程序"; ls squashfs-root/usr/bin; exit 1; }
-          find squashfs-root \( -type f -o -type l \) -name 'libwayland-*.so*' -print -delete
+          printf '%s\n' \
+            '#!/bin/sh' \
+            'HERE="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"' \
+            'export LD_LIBRARY_PATH="$HERE/usr/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"' \
+            'BIN="$(find "$HERE/usr/bin" -maxdepth 1 -iname "terax*" ! -iname "terax-cli*" | head -n1)"' \
+            '[ -n "$BIN" ] || { echo "缺少主程序" >&2; exit 1; }' \
+            'exec "$BIN" "$@"' > squashfs-root/AppRun
+          chmod +x squashfs-root/AppRun
+
           curl -fsSL -o appimagetool.AppImage \
             https://github.com/AppImage/appimagetool/releases/download/1.9.1/appimagetool-x86_64.AppImage
           chmod +x appimagetool.AppImage
@@ -326,14 +401,14 @@ jobs:
           rm -rf squashfs-root
           chmod +x "./$BASENAME"
           "./$BASENAME" --appimage-extract >/dev/null
-          if find squashfs-root -name 'libwayland-*.so*' -print -quit | grep -q .; then
-            echo "重打包后仍存在 wayland 库"; exit 1
-          fi
-          ls squashfs-root/usr/bin | grep -qi '^terax' || { echo "重打包后缺少 terax 主程序"; ls squashfs-root/usr/bin; exit 1; }
+          [ -z "$(find squashfs-root/usr/lib \( -type f -o -type l \) -name '*.so*' -print -quit)" ] \
+            || { echo "重打包后仍存在内嵌运行库"; exit 1; }
+          find squashfs-root/usr/bin -maxdepth 1 -iname 'terax*' | grep -q . \
+            || { echo "重打包后缺少 terax 主程序"; ls squashfs-root/usr/bin; exit 1; }
           popd >/dev/null
           cp "$WORK/$BASENAME" "$APPIMAGE"
           gh release upload "$CN_TAG" "$APPIMAGE" --clobber --repo "$GITHUB_REPOSITORY"
-          echo "AppImage 已修复并覆盖上传"
+          echo "AppImage 已剥离 GUI 运行库并通过 glibc 2.28 校验,覆盖上传完成"
 
       - name: 上传安装包到草稿 Release
         shell: bash
